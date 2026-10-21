@@ -8,7 +8,7 @@ const sb = createClient(SUPABASE_URL, SUPABASE_KEY, {
 
 const TZ = "Europe/London";
 const LIST_COLS =
-  "id,client_id,started_at,duration_secs,kind,title,summary,caller_name,caller_number,caller_id_number,address,caller_email,service,quote_method,visit_preference,notes,ended_reason,status,handled_at,handled_by,source,customer_id,job_id,read_at";
+  "id,client_id,started_at,duration_secs,kind,title,summary,caller_name,caller_number,caller_id_number,address,caller_email,service,quote_method,visit_preference,notes,ended_reason,status,handled_at,handled_by,source,customer_id,job_id,read_at,hidden_reason";
 
 const state = {
   session: null,
@@ -213,7 +213,8 @@ function nextEventFor(jobId) {
     .filter((e) => e.job_id === jobId && !e.done && new Date(e.ends_at || e.starts_at).getTime() >= now)
     .sort((a, b) => a.starts_at.localeCompare(b.starts_at))[0] || null;
 }
-const unread = () => state.calls.filter((c) => !c.read_at && c.kind !== "silent");
+const live = (c) => !c.hidden_reason; // spam/test calls are hidden from lists and stats
+const unread = () => state.calls.filter((c) => live(c) && !c.read_at && c.kind !== "silent");
 
 // ---------- icons ----------
 const I = {
@@ -343,7 +344,7 @@ function subscribe() {
     .subscribe();
 }
 
-const todo = () => state.calls.filter((c) => c.status === "new" && c.kind !== "silent");
+const todo = () => state.calls.filter((c) => live(c) && c.status === "new" && c.kind !== "silent");
 
 async function setHandled(id, handled) {
   const call = state.calls.find((c) => c.id === id);
@@ -452,7 +453,7 @@ function viewHome() {
   const list = todo();
   const n = list.length;
   const ms = monthStart();
-  const month = state.calls.filter((x) => new Date(x.started_at) >= ms);
+  const month = state.calls.filter((x) => live(x) && new Date(x.started_at) >= ms);
   const answered = month.filter((x) => x.kind !== "silent");
   const enquiries = month.filter((x) => x.kind === "enquiry").length;
   const messages = month.filter((x) => x.kind === "message").length;
@@ -516,6 +517,8 @@ function viewHome() {
 function filteredCalls() {
   const q = state.query.trim().toLowerCase();
   return state.calls.filter((c) => {
+    if (state.filter === "hidden") { if (!c.hidden_reason) return false; }
+    else if (c.hidden_reason) return false;
     if (state.filter === "todo" && !(c.status === "new" && c.kind !== "silent")) return false;
     if (state.filter === "unread" && (c.read_at || c.kind === "silent")) return false;
     if (state.filter === "enquiry" && c.kind !== "enquiry") return false;
@@ -529,7 +532,9 @@ function filteredCalls() {
 }
 
 function callsListHtml(currentId) {
+  const nHidden = state.calls.filter((c) => c.hidden_reason).length;
   const f = [["todo", `To do (${todo().length})`], ["unread", `Unread (${unread().length})`], ["all", "All"], ["enquiry", "Enquiries"], ["message", "Messages"], ["no_details", "No details"]];
+  if (nHidden || state.filter === "hidden") f.push(["hidden", `Spam and tests (${nHidden})`]);
   const list = filteredCalls();
   let lastDay = "", rows = "";
   for (const c of list) {
@@ -599,6 +604,7 @@ async function viewCallDetail(id) {
   const detail = `
     <div class="back-row"><a class="back" href="#/calls">${I.back}Calls</a>
       ${c.kind !== "silent" ? `<button class="btn ghost small" data-unread="${c.id}">Mark as unread</button>` : ""}</div>
+    ${c.hidden_reason ? `<div class="err-box" style="margin-bottom:12px">Hidden as ${c.hidden_reason === "spam" ? "spam" : "a test call"}. It doesn't appear in your lists or figures.</div>` : ""}
     <div class="detail-head">
       <div><span class="chip k-${c.kind}">${KIND[c.kind] || "Call"}</span></div>
       <h1>${esc(displayName(c))}</h1>
@@ -632,6 +638,12 @@ async function viewCallDetail(id) {
       </div>
     </section>
     <p style="margin-top:22px" class="small">Did the receptionist handle this call wrong? <button class="link" data-suggest-call="${c.id}">Suggest a change</button></p>
+    <section class="section tidy">
+      ${c.hidden_reason
+        ? `<p class="small">This call is hidden as ${c.hidden_reason === "spam" ? "spam" : "a test call"}. <button class="link" data-hide="" data-call="${c.id}">Restore it</button></p>`
+        : `<p class="small muted">Not a real enquiry? <button class="link" data-hide="spam" data-call="${c.id}">Mark as spam</button> or <button class="link" data-hide="test" data-call="${c.id}">mark as a test call</button>. It's hidden from your lists and figures, and you can restore it.</p>`}
+      ${state.isAdmin ? `<p class="small"><button class="link danger" data-del-call="${c.id}">Delete this call permanently</button> <span class="muted">(admin only)</span></p>` : ""}
+    </section>
     <div class="donebar">
       ${isNew
         ? `<button class="btn primary" data-done="${c.id}">${I.check}Mark as done</button>`
@@ -993,7 +1005,7 @@ async function viewJob(id) {
   const wa = waLink(phone);
   const addr = job.address || cu?.address;
   const evs = state.events.filter((e) => e.job_id === job.id).sort((a, b) => b.starts_at.localeCompare(a.starts_at));
-  const calls = state.calls.filter((c) => c.job_id === job.id);
+  const calls = state.calls.filter((c) => live(c) && c.job_id === job.id);
   const lost = job.stage === "lost";
   const curIdx = STAGE_ORDER.indexOf(job.stage);
   const steps = STAGE_ORDER.map((s, i) => {
@@ -1071,7 +1083,7 @@ async function viewCustomer(id) {
   const cu = customerById(id);
   if (!cu) return shell("customers", `<a class="back" href="#/customers">${I.back}Customers</a><div class="card empty"><h3>Customer not found</h3></div>`);
   const jobs = state.jobs.filter((j) => j.customer_id === id);
-  const calls = state.calls.filter((c) => c.customer_id === id);
+  const calls = state.calls.filter((c) => live(c) && c.customer_id === id);
   const wa = waLink(cu.phone);
   const facts = [
     ["Number", cu.phone && `<a href="tel:${digits(cu.phone)}">${esc(prettyNumber(cu.phone))}</a>`],
@@ -1193,7 +1205,7 @@ function viewMoney() {
   const [from, to, months] = periodRange(state.moneyPeriod);
   const inP = (k) => k && k >= from && k < to;
   const fj = state.jobs.filter((j) => j.from_foner);
-  const calls = state.calls.filter((x) => x.kind !== "silent" && inP(dayKey(new Date(x.started_at))));
+  const calls = state.calls.filter((x) => live(x) && x.kind !== "silent" && inP(dayKey(new Date(x.started_at))));
   const enquiries = fj.filter((j) => inP(dayKey(new Date(j.created_at))));
   const quoted = fj.filter((j) => inP(j.quoted_at));
   const won = fj.filter((j) => inP(j.won_at));
@@ -1580,6 +1592,28 @@ async function crmClick(t, e) {
   if (d.copyCal) {
     try { await navigator.clipboard.writeText(d.copyCal); toast("Calendar link copied. In Google Calendar choose Other calendars, then From URL."); }
     catch { toast(esc(d.copyCal)); }
+    return true;
+  }
+  if (d.hide !== undefined && d.call) {
+    const reason = d.hide || null;
+    const call = state.calls.find((c) => c.id === d.call);
+    const patch = reason ? { hidden_reason: reason, status: "handled", read_at: call?.read_at || new Date().toISOString() } : { hidden_reason: null };
+    const { error } = await sb.from("calls").update(patch).eq("id", d.call);
+    if (error) { toast(`Couldn't update: ${esc(error.message)}`); return true; }
+    if (call) Object.assign(call, patch);
+    if (reason) {
+      toast(`Hidden as ${reason === "spam" ? "spam" : "a test call"}. <button class="link" style="color:inherit" data-hide="" data-call="${d.call}">Undo</button>`, 6000);
+      location.hash = "#/calls";
+    } else { toast("Call restored."); route(); }
+    return true;
+  }
+  if (d.delCall) {
+    if (!confirm("Delete this call permanently? Its notes go too. This can't be undone.")) return true;
+    const { error } = await sb.from("calls").delete().eq("id", d.delCall);
+    if (error) { toast(`Couldn't delete: ${esc(error.message)}`); return true; }
+    state.calls = state.calls.filter((c) => c.id !== d.delCall);
+    toast("Call deleted.");
+    location.hash = "#/calls";
     return true;
   }
   if (d.unread) {
