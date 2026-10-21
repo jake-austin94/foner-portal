@@ -9,6 +9,11 @@ The customer portal for foner, the AI phone receptionist for UK trades. Plain HT
 - **Receptionist**: their AI number and what the receptionist knows; ask for changes to business details, or suggest how calls should be handled. Every request shows its progress and your reply.
 - **Account**: plan, change password, add to home screen, help, sign out.
 - **Admin** (foner only): all open requests across clients with status + reply, a business switcher, and "Import past calls".
+- **Jobs (CRM)**: every enquiry call becomes a job automatically (repeat callers attach to the same customer). Stages: New enquiry → Quote visit booked → Quoted (£) → Won → Job booked → Completed, or Lost with a reason. One-tap "next step" sheets fill in dates and bookings.
+- **Customers**: built from calls or added by hand (WhatsApp, Facebook, website, referral…), with every call, job and booking.
+- **Calendar**: quote visits, jobs and call-backs; week agenda on phones, month grid on desktop; a private subscribe link puts bookings into Apple/Google Calendar (`calendar` function).
+- **What foner made you**: calls → enquiries → quoted → won, £ quoted/won, win rate, average job, return on the foner subscription. Only jobs that started from a foner call count towards the headline.
+- **Unread**: calls stay bold until opened; "Mark as unread" on any call.
 
 ## How data gets in
 
@@ -24,7 +29,7 @@ Recordings are streamed on demand by the `call-audio` function (it checks the si
 ## Supabase
 
 - Project `foner`, ref `lkfriflskqyvwaknzbet`.
-- Edge functions (source in `supabase/functions`): `ingest-call`, `call-audio`, `import-calls`.
+- Edge functions (source in `supabase/functions`): `ingest-call`, `call-audio`, `import-calls`, `calendar` (iCalendar feed, keyed by `clients.calendar_token`).
 - Secrets the functions need (Supabase → Edge Functions → Secrets):
   - `ELEVENLABS_WEBHOOK_SECRET`: the same signing secret the n8n Code node uses.
   - `ELEVENLABS_API_KEY`: an ElevenLabs key with read access to Conversational AI (for recordings and imports).
