@@ -443,6 +443,7 @@ function ticket(c) {
     <div class="acts">
       ${num ? `<a class="btn primary" href="tel:${digits(num)}">${I.phone}Call ${esc(firstName(c.caller_name) || prettyNumber(num))}</a>` : `<a class="btn" href="#/calls/${c.id}">Open call</a>`}
       ${wa ? `<a class="btn whatsapp icon" href="${wa}" target="_blank" rel="noopener" aria-label="WhatsApp ${esc(displayName(c))}">${I.wa}</a>` : ""}
+      ${c.job_id && jobById(c.job_id) && jobById(c.job_id).quote_amount == null ? `<button class="btn icon price-ico" data-price="${c.job_id}" aria-label="Add price for ${esc(displayName(c))}">£</button>` : ""}
       <button class="btn icon" data-done="${c.id}" aria-label="Mark ${esc(displayName(c))} as done">${I.check}</button>
     </div>
   </article>`;
@@ -871,9 +872,9 @@ function nextSteps(job, compact = false) {
   const b = (step, label, primary) =>
     `<button class="btn ${primary ? "primary" : ""} ${compact ? "small" : ""}" data-step="${step}" data-job="${job.id}">${label}</button>`;
   switch (job.stage) {
-    case "new": return b("visit", "Book quote visit", false) + b("quote", "Add quote", true);
-    case "visit_booked": return b("quote", "Add quote", true);
-    case "quoted": return b("lost", "Mark as lost", false) + b("won", "Mark as won", true);
+    case "new": return b("visit", "Book quote visit", false);
+    case "visit_booked": return "";
+    case "quoted": return b("won", "Won at a different price", false);
     case "won": return b("book", "Book the job", true);
     case "booked": return b("complete", "Mark completed", true);
     default: return "";
@@ -935,6 +936,7 @@ function jobPanelForCall(c) {
     return `<section class="section"><div class="card panel-pad jobpanel">
       <div class="row"><div><p class="muted small">Job</p><p class="jp-title"><a href="#/jobs/${job.id}">${esc(cap(job.service) || "Job")}</a></p></div>
         <div style="text-align:right">${stageChip(job.stage)}${val != null ? `<p class="amt">${gbp(val)}</p>` : ""}</div></div>
+      ${priceStrip(job)}
       <p class="small" style="color:var(--ink-2)">${esc(jobLine(job))}</p>
       <div class="jp-acts">${nextSteps(job, true)}<a class="btn small ghost" href="#/jobs/${job.id}">Open job</a></div>
     </div></section>`;
@@ -1037,7 +1039,10 @@ async function viewJob(id) {
       ${wa ? `<a class="btn whatsapp" href="${wa}" target="_blank" rel="noopener">${I.wa}WhatsApp</a>` : ""}
       ${addr ? `<a class="btn" href="${mapLink(addr)}" target="_blank" rel="noopener">${I.map}Directions</a>` : ""}
     </div>
-    ${steps_ ? `<section class="section"><div class="card panel-pad nextstep"><h2>Next step</h2><div class="ns-acts">${steps_}</div></div></section>` : ""}
+    <section class="section"><div class="card panel-pad nextstep">
+      <h2>Price</h2>${priceStrip(job)}
+      ${steps_ ? `<div class="ns-acts" style="margin-top:10px">${steps_}</div>` : ""}
+    </div></section>
     <section class="section"><ol class="stepper ${lost ? "is-lost" : ""}" aria-label="Progress">${steps}</ol>
       ${lost ? `<p class="lostline">Lost${job.lost_reason ? `: ${esc(job.lost_reason)}` : ""}</p>` : ""}</section>
     ${facts.length ? `<section class="section"><div class="section-head"><h2>Details</h2></div><dl class="card facts">${facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("")}</dl></section>` : ""}
@@ -1102,6 +1107,13 @@ async function viewCustomer(id) {
       ${cu.email ? `<a class="btn" href="mailto:${esc(cu.email)}">${I.mail}Email</a>` : ""}
     </div>
     <section class="section"><dl class="card facts">${facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("")}</dl></section>
+    ${(() => {
+      const open = jobs.filter((j) => OPEN_STAGES.includes(j.stage) || j.stage === "won");
+      if (!open.length) return `<section class="section"><div class="card panel-pad nextstep"><h2>Price</h2>
+        <button class="btn primary price-add" data-price-cust="${cu.id}"><span class="pound-ico" aria-hidden="true">£</span>Add price</button></div></section>`;
+      return open.map((j) => `<section class="section"><div class="card panel-pad nextstep">
+        <h2>${esc(cap(j.service) || "Price")}</h2>${priceStrip(j)}</div></section>`).join("");
+    })()}
     <section class="section">
       <div class="section-head"><h2>Jobs</h2><button class="btn ghost small" data-newjob-cust="${cu.id}">${I.plus}New job</button></div>
       <div class="list">${jobs.map(jobCard).join("") || '<div class="card empty"><p>No jobs yet.</p></div>'}</div>
@@ -1305,27 +1317,7 @@ function stepSheet(step, job) {
       },
     });
   }
-  if (step === "quote") {
-    return openSheet({
-      title: "Add quote", intro: esc(custName(cu)),
-      body: `${fld("Amount quoted (£)", `<input class="input" type="number" name="amt" inputmode="decimal" min="0" step="1" required value="${job.quote_amount ?? ""}" placeholder="650">`)}
-        ${fld("Sent on", `<input class="input" type="date" name="d" required value="${job.quoted_at || tk}">`)}
-        <label class="check"><input type="checkbox" name="chase" checked> Remind me to chase it</label>
-        ${fld("Chase on", `<input class="input" type="date" name="cd" value="${addDays(tk, 3)}">`)}`,
-      submit: "Save quote",
-      onSubmit: async (fd) => {
-        const amt = Number(fd.get("amt"));
-        if (!(await save("jobs", job.id, { stage: "quoted", quote_amount: amt, quoted_at: fd.get("d") }))) return false;
-        const past = state.events.filter((e) => e.job_id === job.id && e.kind === "quote_visit" && !e.done && new Date(e.starts_at) < new Date());
-        for (const e of past) await save("events", e.id, { done: true });
-        if (fd.get("chase") && fd.get("cd")) {
-          await create("events", { kind: "callback", job_id: job.id, customer_id: cu?.id, all_day: true, starts_at: noonISO(fd.get("cd")), ends_at: noonISO(addDays(fd.get("cd"), 1)), title: `Chase quote (${gbp(amt)})` });
-        }
-        toast(`Quote of ${gbp(amt)} saved.`);
-        return after();
-      },
-    });
-  }
+  if (step === "quote") return priceSheet(job);
   if (step === "won") {
     return openSheet({
       title: "Mark as won", intro: `${esc(custName(cu))} said yes.`,
@@ -1544,10 +1536,84 @@ async function setStage(job, stage) {
   if (await save("jobs", job.id, patch)) { toast(`Moved to ${STAGES[stage].toLowerCase()}.`); route(); }
 }
 
+// ---------- Prices: one box, one tap ----------
+function priceSheet(job) {
+  const cu = customerById(job.customer_id);
+  const tk = todayKey();
+  const chaseOpen = state.events.find((e) => e.job_id === job.id && e.kind === "callback" && !e.done);
+  openSheet({
+    title: job.quote_amount != null ? "Change price" : "Add price",
+    intro: `${esc(custName(cu))}${job.service ? `, ${esc(job.service)}` : ""}`,
+    body: `<label class="pricebox"><span class="sr-only">Price quoted in pounds</span><span class="pound" aria-hidden="true">£</span>
+        <input type="number" name="amt" inputmode="decimal" min="0" step="any" required value="${job.quote_amount ?? ""}" placeholder="0" autocomplete="off" enterkeyhint="done"></label>
+      <p class="muted small">Sent ${prettyDay(job.quoted_at || tk).toLowerCase()}. ${chaseOpen ? "Your chase reminder stays as it is." : "We'll remind you to chase it in 3 days."}</p>
+      <details class="more-opts"><summary>Change date or reminder</summary>
+        <div class="stack" style="margin-top:10px">
+          ${fld("Sent on", `<input class="input" type="date" name="d" value="${job.quoted_at || tk}">`)}
+          <label class="check"><input type="checkbox" name="chase" ${chaseOpen ? "" : "checked"}> ${chaseOpen ? "Add another chase reminder" : "Remind me to chase it"}</label>
+          ${fld("Chase on", `<input class="input" type="date" name="cd" value="${addDays(tk, 3)}">`)}
+        </div></details>`,
+    submit: "Save price",
+    onSubmit: async (fd) => {
+      const amt = Math.round(Number(String(fd.get("amt")).replace(/[£,\s]/g, "")) * 100) / 100;
+      if (!(amt >= 0) || String(fd.get("amt")).trim() === "") { toast("Type the price, for example 650."); return false; }
+      const stage = ["won", "booked", "completed"].includes(job.stage) ? job.stage : "quoted";
+      if (!(await save("jobs", job.id, { stage, quote_amount: amt, quoted_at: fd.get("d") || job.quoted_at || tk }))) return false;
+      const past = state.events.filter((e) => e.job_id === job.id && e.kind === "quote_visit" && !e.done && new Date(e.starts_at) < new Date());
+      for (const e of past) await save("events", e.id, { done: true });
+      if (stage === "quoted" && fd.get("chase") && fd.get("cd")) {
+        await create("events", { kind: "callback", job_id: job.id, customer_id: cu?.id, all_day: true, starts_at: noonISO(fd.get("cd")), ends_at: noonISO(addDays(fd.get("cd"), 1)), title: `Chase quote (${gbp(amt)})` });
+      } else if (chaseOpen) {
+        await save("events", chaseOpen.id, { title: `Chase quote (${gbp(amt)})` });
+      }
+      toast(`Price saved: ${gbp(amt)}.`);
+      route();
+      return true;
+    },
+  });
+  // Put the cursor straight in the price box
+  setTimeout(() => document.querySelector('.pricebox input')?.focus(), 60);
+}
+
+async function acceptQuote(job) {
+  const amt = job.quote_amount;
+  if (!(await save("jobs", job.id, { stage: "won", won_amount: amt, won_at: todayKey() }))) return;
+  await closeOpenEvents(job.id, ["callback"]);
+  toast(`Won ${gbp(amt)}. <button class="link" style="color:inherit" data-step="book" data-job="${job.id}">Book the job date</button>`, 7000);
+  route();
+}
+
+// The price line shown wherever a job appears
+function priceStrip(job) {
+  if (!job) return "";
+  if (job.stage === "lost") return `<div class="pricebar is-lost"><span>Lost${job.lost_reason ? `: ${esc(job.lost_reason)}` : ""}</span></div>`;
+  if (["won", "booked", "completed"].includes(job.stage)) {
+    return `<div class="pricebar is-won"><span class="amt">${gbp(jobValue(job))}</span><span class="pb-label">${job.stage === "completed" ? "done and won" : "won"}</span>
+      ${job.stage === "won" ? `<button class="btn small primary" data-step="book" data-job="${job.id}">Book the job</button>` : ""}</div>`;
+  }
+  if (job.quote_amount != null) {
+    return `<div class="pricebar is-quoted">
+      <button class="pb-amt" data-price="${job.id}" aria-label="Change price, now ${gbp(job.quote_amount)}"><span class="amt">${gbp(job.quote_amount)}</span><span class="pb-edit">Change</span></button>
+      <div class="pb-ask"><span class="pb-label">Did they accept?</span>
+        <div class="yn"><button class="btn primary" data-accept="${job.id}">${I.check}Yes</button><button class="btn" data-step="lost" data-job="${job.id}">No</button></div></div>
+    </div>`;
+  }
+  return `<button class="btn primary price-add" data-price="${job.id}"><span class="pound-ico" aria-hidden="true">£</span>Add price</button>`;
+}
+
 // One handler for every CRM button. Returns true when it handled the click.
 async function crmClick(t, e) {
   const d = t.dataset;
-  if (d.step && d.job) { const j = jobById(d.job); if (j) stepSheet(d.step, j); return true; }
+  if (d.price) { const j = jobById(d.price); if (j) { closeSheets(); priceSheet(j); } return true; }
+  if (d.accept) { const j = jobById(d.accept); if (j) acceptQuote(j); return true; }
+  if (d.priceCust) {
+    // A customer with no open job: start one, then ask for the price
+    const cu = customerById(d.priceCust);
+    const job = await create("jobs", { customer_id: cu.id, address: cu.address || null, from_foner: cu.source === "foner_call" });
+    if (job) priceSheet(job);
+    return true;
+  }
+  if (d.step && d.job) { const j = jobById(d.job); if (j) { closeSheets(); stepSheet(d.step, j); } return true; }
   if (d.newjobCust) { addJobSheet({ customerId: d.newjobCust, callId: d.fromCall || null }); return true; }
   if (d.newJob) { addJobSheet({ callId: d.fromCall || null, customerOnly: !!d.customerOnly }); return true; }
   if (d.editJob) { const j = jobById(d.editJob); if (j) editJobSheet(j); return true; }
