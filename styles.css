@@ -100,7 +100,7 @@ p { margin: 0; }
 }
 .topbar .logo { height: 24px; width: auto; }
 .topbar .biz { margin-left: auto; font-size: .875rem; color: var(--ink-2); text-align: right; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.topbar select { max-width: 60vw; border: 1px solid var(--line); background: var(--paper); border-radius: var(--radius-s); padding: 6px 8px; font-size: .875rem; }
+.topbar select { flex: 0 1 auto; min-width: 0; max-width: calc(100vw - 150px); border: 1px solid var(--line); background: var(--paper); color: var(--ink); border-radius: var(--radius-s); padding: 6px 8px; font-size: 16px; text-overflow: ellipsis; white-space: nowrap; overflow: hidden; }
 .logo-dark { display: none; }
 @media (prefers-color-scheme: dark) { .logo-light { display: none; } .logo-dark { display: block; } }
 
@@ -544,3 +544,16 @@ details.more-opts summary { cursor: pointer; color: var(--action); font-weight: 
 .pb-ask { display: grid; gap: 6px; }
 .yn { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .yn .btn { min-height: 50px; }
+
+/* ---------- feel like an app on phones ---------- */
+/* Never allow sideways scrolling, even if something is a pixel too wide */
+html, body { max-width: 100%; overflow-x: clip; }
+@supports not (overflow: clip) { html, body { overflow-x: hidden; } }
+/* iPhone zooms into any text box under 16px and stays zoomed, so keep every box at 16px or more */
+input, select, textarea, .input { font-size: max(16px, 1em); }
+/* Stop double-tap zoom and the grey flash on tap */
+html { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+/* Stop the whole page rubber-banding sideways */
+body { overscroll-behavior-x: none; }
+.topbar { min-width: 0; }
+.topbar > a { flex: none; }
