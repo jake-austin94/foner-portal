@@ -749,7 +749,26 @@ function viewAccount() {
 
 async function viewAdmin() {
   if (!state.isAdmin) { location.hash = "#/"; return ""; }
-  const { data: reqs } = await sb.from("change_requests").select("*, clients(business_name)").order("created_at", { ascending: false }).limit(100);
+  const [{ data: reqs }, { data: members }] = await Promise.all([
+    sb.from("change_requests").select("*, clients(business_name)").order("created_at", { ascending: false }).limit(100),
+    sb.rpc("admin_member_activity"),
+  ]);
+  // "yesterday 22:49" / "15 min ago" / "on Wed, 21 Oct"
+  const when = (t) => { if (!t) return ""; const a = ago(t); return /^(Just|Yesterday|\d)/.test(a) ? a.toLowerCase() : /^\d\d:\d\d$/.test(a) ? `today ${a}` : `on ${a}`; };
+  const memberRow = (m) => {
+    const isYou = m.email === state.email;
+    let status, cls;
+    if (!m.has_login) { status = "No login created yet"; cls = "st-declined"; }
+    else if (!m.last_sign_in) { status = "Never signed in"; cls = "st-pending"; }
+    else { status = m.signed_in_now ? "Signed in" : "Signed out"; cls = m.signed_in_now ? "st-done" : "st-declined"; }
+    const lines = [];
+    if (m.has_login && m.last_sign_in) lines.push(`Last signed in ${when(m.last_sign_in)}`);
+    if (m.last_active) lines.push(`last used ${when(m.last_active)}`);
+    if (m.has_login) lines.push(m.password_changed_at ? `password changed ${when(m.password_changed_at)}` : "still on temporary password");
+    return `<div class="req"><div class="row"><strong>${esc(m.business_name)}</strong><span class="chip ${cls}">${status}</span></div>
+      <p class="small">${esc(m.email)}${isYou ? ' <span class="muted">(you)</span>' : ""}</p>
+      <p class="small muted">${lines.join(", ")}${lines.length ? "." : ""}</p></div>`;
+  };
   const open = (reqs || []).filter((r) => r.status === "pending" || r.status === "in_progress");
   const closed = (reqs || []).filter((r) => !(r.status === "pending" || r.status === "in_progress")).slice(0, 20);
   const card = (r) => `<form class="req" data-req="${r.id}">
@@ -766,6 +785,11 @@ async function viewAdmin() {
   return shell("admin", `
     <h1 style="margin-bottom:14px">Admin</h1>
     <section class="section" style="margin-top:0">
+      <div class="section-head"><h2>Client logins</h2></div>
+      <div class="card">${(members || []).map(memberRow).join("") || '<div class="empty"><p>No client logins yet.</p></div>'}</div>
+      <p class="muted small" style="margin-top:8px">Your own test logins count too, so sign out of a client's account after checking it.</p>
+    </section>
+    <section class="section">
       <div class="section-head"><h2>Open requests (${open.length})</h2></div>
       <div class="card">${open.map(card).join("") || '<div class="empty"><p>No open requests.</p></div>'}</div>
     </section>
@@ -1846,6 +1870,7 @@ document.addEventListener("submit", async (e) => {
     const { error } = await sb.auth.updateUser({ password: pw });
     if (error) { toast(error.message); return; }
     toast("Password updated.");
+    sb.rpc("mark_password_changed").then(() => {});
     if (state.recovery) { state.recovery = false; history.replaceState(null, "", "#/"); route(); }
     f.reset();
     return;
@@ -1900,7 +1925,8 @@ async function playAudio(id, btn) {
 window.addEventListener("hashchange", route);
 desktop.addEventListener("change", route);
 document.addEventListener("visibilitychange", async () => {
-  if (document.visibilityState === "visible" && state.session && state.clientId) { await loadCalls(true); route(); }
+  if (document.visibilityState === "visible" && state.session && state.clientId) {
+    sb.rpc("mark_opened").then(() => {}); await loadCalls(true); route(); }
 });
 
 // ---------- boot ----------
@@ -1918,6 +1944,7 @@ async function onSession(session) {
     state.isAdmin = admin === true;
   } catch (e) { console.error(e); }
   subscribe();
+  sb.rpc("mark_opened").then(() => {});
   if (!location.hash.startsWith("#/")) history.replaceState(null, "", "#/");
   route();
 }
