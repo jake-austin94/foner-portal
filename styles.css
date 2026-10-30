@@ -557,3 +557,11 @@ html { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 body { overscroll-behavior-x: none; }
 .topbar { min-width: 0; }
 .topbar > a { flex: none; }
+
+/* Ads (admin): sign-ups are tappable rows */
+.lead-row { width: 100%; background: none; border: 0; border-bottom: 1px solid var(--line); text-align: left; font: inherit; color: inherit; cursor: pointer; }
+.lead-row:last-child { border-bottom: 0; }
+.lead-row:hover { background: var(--muted-soft); }
+.lead-row:focus-visible { outline: 2px solid var(--action); outline-offset: -2px; }
+.section-head .btn.small svg { width: 16px; height: 16px; }
+@media (min-width: 960px) { .figs.ads-figs { grid-template-columns: repeat(3, minmax(0, 1fr)); } }

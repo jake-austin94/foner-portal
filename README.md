@@ -9,6 +9,7 @@ The customer portal for foner, the AI phone receptionist for UK trades. Plain HT
 - **Receptionist**: their AI number and what the receptionist knows; ask for changes to business details, or suggest how calls should be handled. Every request shows its progress and your reply.
 - **Account**: plan, change password, add to home screen, help, sign out.
 - **Admin** (foner only): all open requests across clients with status + reply, a business switcher, and "Import past calls".
+- **Ads** (foner only): which adverts bring sign-ups, free months and paying customers. Per-ad funnel and cost per sign-up, trial and customer (from the `ad_performance` view), every foner.uk sign-up with a tap-to-update stage, and weekly ad spend entry. Sign-ups and visits come from `assets/track.js` on foner.uk.
 - **Jobs (CRM)**: every enquiry call becomes a job automatically (repeat callers attach to the same customer). Stages: New enquiry → Quote visit booked → Quoted (£) → Won → Job booked → Completed, or Lost with a reason. One-tap "next step" sheets fill in dates and bookings.
 - **Customers**: built from calls or added by hand (WhatsApp, Facebook, website, referral…), with every call, job and booking.
 - **Calendar**: quote visits, jobs and call-backs; week agenda on phones, month grid on desktop; a private subscribe link puts bookings into Apple/Google Calendar (`calendar` function).

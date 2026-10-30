@@ -226,6 +226,7 @@ const I = {
   jobs: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 13h18"/></svg>',
   calendar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="17" rx="2"/><path d="M16 2.5v4M8 2.5v4M3 10h18"/></svg>',
   money: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg>',
+  ads: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11v2a1 1 0 0 0 1 1h3l5 4V6L7 10H4a1 1 0 0 0-1 1z"/><path d="M16 8.5a5 5 0 0 1 0 7M19 5.5a9 9 0 0 1 0 13"/></svg>',
   more: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>',
   gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
   plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
@@ -376,7 +377,7 @@ function nav(active) {
     ["agent", "#/agent", "Receptionist", I.agent],
     ["account", "#/account", "Account", I.gear],
   ];
-  if (state.isAdmin) railItems.push(["admin", "#/admin", "Admin", I.admin]);
+  if (state.isAdmin) railItems.push(["admin", "#/admin", "Admin", I.admin], ["ads", "#/ads", "Ads", I.ads]);
   const tabItems = [
     ["home", "#/", "Home", I.home],
     ["calls", "#/calls", "Calls", I.calls],
@@ -384,7 +385,7 @@ function nav(active) {
     ["calendar", "#/calendar", "Calendar", I.calendar],
     ["more", "#/more", "More", I.more],
   ];
-  const tabActive = ["customers", "money", "agent", "account", "admin", "more"].includes(active) ? "more" : active;
+  const tabActive = ["customers", "money", "agent", "account", "admin", "ads", "more"].includes(active) ? "more" : active;
   const link = ([k, href, label, icon], cur, rail) =>
     `<a href="${href}" ${k === cur ? 'aria-current="page"' : ""}>${icon}<span>${label}</span>${
       k === "calls" && n ? `<span class="dot" aria-label="${n} unread">${n}</span>` : ""
@@ -805,6 +806,182 @@ async function viewAdmin() {
       <div class="section-head"><h2>Recently closed</h2></div>
       <div class="card">${closed.map(card).join("") || '<div class="empty"><p>Nothing yet.</p></div>'}</div>
     </section>`);
+}
+
+// =====================================================================
+// Ads (foner admin only): which adverts bring sign-ups, trials and customers
+// Data comes from foner.uk via assets/track.js → site_events / site_leads,
+// spend is typed in here (ad_spend), and the ad_performance view does the maths.
+// =====================================================================
+const LEAD_STAGES = [
+  ["new", "New sign-up", null],
+  ["call_booked", "Call booked", "call_booked_at"],
+  ["call_held", "Call held", "call_held_at"],
+  ["trial", "On free month", "trial_started_at"],
+  ["paying", "Paying", "paid_at"],
+];
+const LEAD_STAGE_CLS = { new: "st-new", call_booked: "st-visit_booked", call_held: "st-quoted", trial: "st-in_progress", paying: "st-won", lost: "st-lost" };
+const ads = { leads: [], perf: [], spend: [] };
+
+function leadStage(l) {
+  if (l.lost_at) return "lost";
+  for (let i = LEAD_STAGES.length - 1; i > 0; i--) if (l[LEAD_STAGES[i][2]]) return LEAD_STAGES[i][0];
+  return "new";
+}
+const leadStageLabel = (s) => (s === "lost" ? "Lost" : LEAD_STAGES.find((x) => x[0] === s)[1]);
+const leadChip = (s) => `<span class="chip ${LEAD_STAGE_CLS[s]}">${leadStageLabel(s)}</span>`;
+const adLabel = (l) => (l.utm_content || l.utm_campaign ? esc(l.utm_content || l.utm_campaign) : l.has_fbclid ? "an untagged Facebook link" : "no ad");
+const pl = (n, one, many = one + "s") => `${n} ${Number(n) === 1 ? one : many}`;
+const money2 = (n) => (n == null ? "–" : new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(Number(n)));
+
+async function loadAds() {
+  const [l, p, s] = await Promise.all([
+    sb.from("site_leads").select("*").order("created_at", { ascending: false }).limit(300),
+    sb.from("ad_performance").select("*"),
+    sb.from("ad_spend").select("*").order("week_start", { ascending: false }).limit(60),
+  ]);
+  const err = l.error || p.error || s.error;
+  if (err) throw err;
+  ads.leads = l.data; ads.perf = p.data; ads.spend = s.data;
+}
+
+async function viewAds() {
+  if (!state.isAdmin) { location.hash = "#/"; return ""; }
+  await loadAds();
+  const sum = (k) => ads.perf.reduce((t, r) => t + Number(r[k] || 0), 0);
+  const spend = sum("spend"), leads = sum("leads"), trials = sum("trials"), paying = sum("paying"), visitors = sum("visitors");
+  const per = (n) => (n ? money2(spend / n) : "–");
+
+  const perfCard = (r) => {
+    const cpc = r.cost_per_customer != null ? Number(r.cost_per_customer) : null;
+    const avgMrr = r.paying ? Number(r.monthly_revenue) / r.paying : null;
+    const payback = cpc != null && avgMrr ? cpc / avgMrr : null;
+    return `<div class="setting">
+      <div class="row"><strong>${r.campaign === "(no campaign)" ? "Not from a tagged ad" : esc(r.ad)}</strong><span class="muted small">${r.campaign === "(no campaign)" ? "organic, direct or untagged" : esc(r.campaign)}</span></div>
+      <p class="small">${pl(r.visitors, "visitor")} → <strong>${pl(r.leads, "sign-up")}</strong> → ${pl(r.calls_booked, "call")} → ${pl(r.trials, "trial")} → <strong>${r.paying}</strong> paying</p>
+      ${Number(r.spend) > 0 ? `<p class="small muted">Spent ${money2(r.spend)}. Per sign-up ${money2(r.cost_per_lead)}, per trial ${money2(r.cost_per_trial)}, per customer ${money2(r.cost_per_customer)}${payback != null ? `. Pays back in ${payback < 1 ? "under a month" : `${payback.toFixed(1)} months`}` : ""}.</p>`
+        : r.campaign === "(no campaign)" ? "" : '<p class="small muted">No spend added for this ad yet.</p>'}
+    </div>`;
+  };
+  const perf = [...ads.perf].sort((a, b) => Number(b.spend) - Number(a.spend) || b.leads - a.leads || b.visitors - a.visitors);
+
+  const leadRow = (l) => `<button class="setting lead-row" data-lead="${l.id}">
+      <div class="row"><strong>${esc(l.name)}</strong>${leadChip(leadStage(l))}</div>
+      <span class="small">${esc(l.email)}${l.website ? `, ${esc(l.website)}` : ""}</span>
+      <span class="small muted">${ago(l.created_at)} from ${adLabel(l)}${l.monthly_value ? `, ${money2(l.monthly_value)} a month` : ""}</span>
+    </button>`;
+
+  const spendRow = (s) => `<div class="setting"><div class="row">
+      <span><strong>${money2(s.spend)}</strong> <span class="small">${esc(s.utm_content)}</span><br><span class="small muted">Week of ${dayFmt.format(new Date(s.week_start + "T12:00:00Z"))}, ${esc(s.utm_campaign)}</span></span>
+      <button class="link danger small" data-del-spend="${s.id}" aria-label="Delete this spend entry">Delete</button></div></div>`;
+
+  return shell("ads", `
+    <h1 style="margin-bottom:6px">Ads</h1>
+    <p class="lede">Which adverts bring sign-ups, free months and paying customers.</p>
+    <div class="card panel-pad"><div class="figs ads-figs">
+      <div><div class="num">${money2(spend)}</div><div class="lbl">spent on ads</div></div>
+      <div><div class="num">${leads}</div><div class="lbl">sign-ups (${visitors} visitors)</div></div>
+      <div><div class="num">${per(leads)}</div><div class="lbl">per sign-up</div></div>
+      <div><div class="num">${per(trials)}</div><div class="lbl">per free month started</div></div>
+      <div><div class="num">${paying}</div><div class="lbl">paying customers</div></div>
+      <div><div class="num">${per(paying)}</div><div class="lbl">per paying customer</div></div>
+    </div></div>
+
+    <section class="section">
+      <div class="section-head"><h2>Each ad</h2></div>
+      <div class="card">${perf.map(perfCard).join("") || '<div class="empty"><p>No ad traffic yet. Once an ad with the tracking tags runs, each ad shows here.</p></div>'}</div>
+      <p class="muted small" style="margin-top:8px">Give an ad at least 2 to 3 times your target cost per sign-up before judging it. Trials only become customers after the free month, so check back then.</p>
+    </section>
+
+    <section class="section">
+      <div class="section-head"><h2>Sign-ups (${ads.leads.length})</h2></div>
+      <div class="card">${ads.leads.map(leadRow).join("") || '<div class="empty"><p>No sign-ups yet.</p></div>'}</div>
+      ${ads.leads.length ? '<p class="muted small" style="margin-top:8px">Tap a sign-up to move it on as you call them, start their free month or they start paying.</p>' : ""}
+    </section>
+
+    <section class="section">
+      <div class="section-head"><h2>Ad spend</h2><button class="btn small primary" data-add-spend>${I.plus}Add spend</button></div>
+      <div class="card">${ads.spend.map(spendRow).join("") || '<div class="empty"><p>Add what each ad spent each week, from Meta Ads Manager.</p></div>'}</div>
+    </section>`);
+}
+
+function leadSheet(l) {
+  const cur = leadStage(l);
+  const stageOpts = [...LEAD_STAGES.map(([k, label]) => [k, label]), ["lost", "Lost"]];
+  openSheet({
+    title: esc(l.name),
+    intro: `${esc(l.email)}${l.website ? `, ${esc(l.website)}` : ""}<br>Signed up ${ago(l.created_at).toLowerCase()} from ${adLabel(l)}${l.utm_campaign && l.utm_content ? ` (${esc(l.utm_campaign)})` : ""}`,
+    body: `${fld("Where they're up to", `<select class="input" name="stage">${stageOpts.map(([k, label]) => opt(k, label, k === cur)).join("")}</select>`)}
+      ${fld("Monthly value (£)", `<input class="input" type="number" inputmode="decimal" min="0" step="0.01" name="mv" value="${l.monthly_value ?? ""}" placeholder="49">`, "when they pay")}
+      ${fld("Notes", `<textarea name="notes" maxlength="2000" style="min-height:72px">${esc(l.notes || "")}</textarea>`)}
+      <p class="small"><a href="mailto:${esc(l.email)}">Email ${esc(firstName(l.name)) || "them"}</a></p>`,
+    submit: "Save",
+    onSubmit: async (fd) => {
+      const stage = String(fd.get("stage"));
+      const now = new Date().toISOString();
+      const patch = { notes: String(fd.get("notes") || "").trim() || null };
+      const mv = String(fd.get("mv") || "").trim();
+      patch.monthly_value = mv === "" ? null : Number(mv);
+      if (stage === "lost") patch.lost_at = l.lost_at || now;
+      else {
+        patch.lost_at = null;
+        const idx = LEAD_STAGES.findIndex((x) => x[0] === stage);
+        LEAD_STAGES.forEach(([, , col], i) => { if (col) patch[col] = i <= idx ? l[col] || now : null; });
+        if (stage === "paying" && patch.monthly_value == null) patch.monthly_value = 49;
+      }
+      const { error } = await sb.from("site_leads").update(patch).eq("id", l.id);
+      if (error) { toast(`Couldn't save: ${esc(error.message)}`); return false; }
+      toast(`${esc(firstName(l.name)) || "Lead"} moved to ${leadStageLabel(stage).toLowerCase()}.`);
+      route();
+      return true;
+    },
+  });
+}
+
+function spendSheet() {
+  const known = ads.perf.filter((r) => r.campaign !== "(no campaign)");
+  const last = ads.spend[0];
+  const camps = [...new Set(known.map((r) => r.campaign))];
+  const adNames = [...new Set(known.map((r) => r.ad).filter((a) => a !== "(no ad)"))];
+  openSheet({
+    title: "Add ad spend",
+    intro: "From Meta Ads Manager: what one ad spent in one week. Adding the same ad and week again replaces it.",
+    body: `${fld("Week starting", `<input class="input" type="date" name="week" required value="${mondayOf(todayKey())}">`)}
+      ${fld("Campaign name", `<input class="input" name="campaign" required list="dl-camps" autocomplete="off" value="${esc(last?.utm_campaign || camps[0] || "")}">`)}
+      ${fld("Ad name", `<input class="input" name="ad" required list="dl-ads" autocomplete="off" placeholder="e.g. missed-calls-stat-v1">`, "exactly as named in Meta")}
+      ${fld("Spent (£)", `<input class="input" type="number" inputmode="decimal" min="0" step="0.01" name="spend" required>`)}
+      <datalist id="dl-camps">${camps.map((c) => `<option value="${esc(c)}">`).join("")}</datalist>
+      <datalist id="dl-ads">${adNames.map((c) => `<option value="${esc(c)}">`).join("")}</datalist>`,
+    submit: "Save spend",
+    onSubmit: async (fd) => {
+      const row = {
+        week_start: String(fd.get("week")),
+        utm_campaign: String(fd.get("campaign")).trim(),
+        utm_content: String(fd.get("ad")).trim(),
+        spend: Number(fd.get("spend")),
+      };
+      if (!row.week_start || !row.utm_campaign || !row.utm_content || !(row.spend >= 0)) { toast("Fill in every box."); return false; }
+      const { error } = await sb.from("ad_spend").upsert(row, { onConflict: "week_start,utm_campaign,utm_content" });
+      if (error) { toast(`Couldn't save: ${esc(error.message)}`); return false; }
+      toast("Spend saved.");
+      route();
+      return true;
+    },
+  });
+}
+
+async function adsClick(t) {
+  const d = t.dataset;
+  if (d.lead) { const l = ads.leads.find((x) => x.id === d.lead); if (l) leadSheet(l); return true; }
+  if (d.addSpend !== undefined) { spendSheet(); return true; }
+  if (d.delSpend) {
+    if (!confirm("Delete this spend entry?")) return true;
+    const { error } = await sb.from("ad_spend").delete().eq("id", d.delSpend);
+    toast(error ? `Couldn't delete: ${esc(error.message)}` : "Spend deleted.");
+    if (!error) route();
+    return true;
+  }
+  return false;
 }
 
 function viewLogin(msg = "") {
@@ -1307,7 +1484,7 @@ function viewMore() {
     ["#/agent", I.agent, "Receptionist", "What it tells callers, and change requests"],
     ["#/account", I.gear, "Account", "Plan, password and help"],
   ];
-  if (state.isAdmin) links.push(["#/admin", I.admin, "Admin", "Requests from every business"]);
+  if (state.isAdmin) links.push(["#/admin", I.admin, "Admin", "Requests from every business"], ["#/ads", I.ads, "Ads", "Which adverts bring sign-ups and customers"]);
   return shell("more", `<h1 style="margin-bottom:14px">More</h1><div class="card">${links.map(([h, i, t, s]) =>
     `<a class="morelink" href="${h}">${i}<span><strong>${t}</strong><span class="muted small">${s}</span></span>${I.next}</a>`).join("")}</div>`);
 }
@@ -1757,6 +1934,7 @@ async function route() {
     else if (page === "agent") { await loadRequests(); html = viewAgent(); }
     else if (page === "account") html = viewAccount();
     else if (page === "admin") html = await viewAdmin();
+    else if (page === "ads") html = await viewAds();
     else html = viewHome();
   } catch (e) {
     console.error(e);
@@ -1779,6 +1957,7 @@ document.addEventListener("click", async (e) => {
   const t = e.target.closest("button, a");
   if (!t) return;
   if (await crmClick(t, e)) return;
+  if (state.isAdmin && (await adsClick(t))) return;
   if (t.dataset.done) { e.preventDefault(); setHandled(t.dataset.done, true); return; }
   if (t.dataset.undone) { setHandled(t.dataset.undone, false); return; }
   if (t.dataset.undo) { setHandled(t.dataset.undo, false); return; }
