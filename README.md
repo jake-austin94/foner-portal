@@ -15,6 +15,7 @@ The customer portal for foner, the AI phone receptionist for UK trades. Plain HT
 - **Calendar**: quote visits, jobs and call-backs; week agenda on phones, month grid on desktop; a private subscribe link puts bookings into Apple/Google Calendar (`calendar` function).
 - **What foner made you**: calls → enquiries → quoted → won, £ quoted/won, win rate, average job, return on the foner subscription. Only jobs that started from a foner call count towards the headline.
 - **Unread**: calls stay bold until opened; "Mark as unread" on any call.
+- **Notifications** (businesses with `clients.push_enabled` on): turned on under Account, per phone. New call straight away; job with no price at 6pm UK, once more two days later (booked visits wait until after the visit); chase reminders at 8am UK on the chase day. Tapping a price notification opens Add price, which sets the chase reminder. iPhones need foner on the Home Screen (iOS 16.4+).
 
 ## How data gets in
 
@@ -30,11 +31,13 @@ Recordings are streamed on demand by the `call-audio` function (it checks the si
 ## Supabase
 
 - Project `foner`, ref `lkfriflskqyvwaknzbet`.
-- Edge functions (source in `supabase/functions`): `ingest-call`, `call-audio`, `import-calls`, `calendar` (iCalendar feed, keyed by `clients.calendar_token`).
+- Edge functions (source in `supabase/functions`): `ingest-call`, `call-audio`, `import-calls`, `calendar` (iCalendar feed, keyed by `clients.calendar_token`), `push` (notifications; timing rules in `rules.js`, tests with `node --test supabase/functions/push/rules.test.mjs`).
 - Secrets the functions need (Supabase → Edge Functions → Secrets):
   - `ELEVENLABS_WEBHOOK_SECRET`: the same signing secret the n8n Code node uses.
   - `ELEVENLABS_API_KEY`: an ElevenLabs key with read access to Conversational AI (for recordings and imports).
 - Security: row-level security on every table. Owners see only their business (matched by their confirmed sign-in email in `client_members`); they can tick calls done, add notes and send requests, nothing else. Admins are listed in `admins`.
+
+To switch notifications on for a business, set `clients.push_enabled` to true. Sending runs from the `calls_push` database trigger and the `foner-push-reminders` cron job, and `push_log` stops anything going twice.
 
 ## Adding a customer to the portal
 

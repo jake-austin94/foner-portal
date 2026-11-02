@@ -725,6 +725,10 @@ function viewAccount() {
       <div class="setting"><span class="k">Business</span><p class="v">${esc(c?.business_name || "")}</p></div>
       <div class="setting"><span class="k">Plan</span><p class="v">${esc(c?.plan_name || "")}, ${c?.plan_minutes || 60} call minutes a month</p></div>
     </div>
+    ${c?.push_enabled ? `<section class="section">
+      <div class="section-head"><h2>Notifications</h2></div>
+      <div class="card panel-pad stack" id="push-card"><p class="muted small">Checking this phone…</p></div>
+    </section>` : ""}
     <section class="section">
       <div class="section-head"><h2>Put foner on your home screen</h2></div>
       <div class="card panel-pad"><p>${ios
@@ -1918,7 +1922,7 @@ async function route() {
   if (state.recovery) { app.innerHTML = viewSetPassword(); return; }
   if (!state.session) { app.innerHTML = viewLogin(); return; }
   if (!state.clients.length) { app.innerHTML = viewNoBusiness(); return; }
-  const [, page, id] = hash.split("/");
+  const [, page, id, action] = hash.split("/");
   let html;
   try {
     await Promise.all([loadCalls(), loadCRM()]);
@@ -1950,6 +1954,94 @@ async function route() {
   if (sameCallsPage) { const p = app.querySelector(".split .pane"); if (p) p.scrollTop = listScroll; }
   else if (route.lastHash !== hash) window.scrollTo(0, 0); else window.scrollTo(0, keepScroll);
   route.lastHash = hash;
+  if (page === "account") renderPushCard();
+  // A "needs a price" notification opens straight on the Add price sheet
+  if (page === "jobs" && id && action === "price") {
+    route.lastHash = `#/jobs/${id}`;
+    history.replaceState(null, "", route.lastHash);
+    const j = jobById(id);
+    if (j && ["new", "visit_booked", "quoted"].includes(j.stage)) priceSheet(j);
+  }
+}
+
+// ---------- push notifications ----------
+const pushSupported = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const isInstalled = () => window.navigator.standalone === true || matchMedia("(display-mode: standalone)").matches;
+
+async function pushCurrent() {
+  const reg = await navigator.serviceWorker.getRegistration();
+  return reg ? reg.pushManager.getSubscription() : null;
+}
+function pushSave(sub) {
+  const { endpoint, keys } = sub.toJSON();
+  return sb.rpc("push_subscribe", { p_client: state.clientId, p_endpoint: endpoint, p_p256dh: keys.p256dh, p_auth: keys.auth, p_ua: navigator.userAgent });
+}
+function b64urlBytes(s) {
+  const raw = atob(s.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(s.length / 4) * 4, "="));
+  return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+}
+async function pushOn() {
+  try {
+    // Has to be the first thing after the tap, or iPhones ignore it
+    const perm = await Notification.requestPermission();
+    if (perm !== "granted") return;
+    await navigator.serviceWorker.register("sw.js");
+    const reg = await navigator.serviceWorker.ready;
+    const { data, error } = await sb.functions.invoke("push", { body: { action: "key" } });
+    if (error || !data?.key) throw error || new Error("no key");
+    const sub = await reg.pushManager.getSubscription() || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64urlBytes(data.key) });
+    const { error: saveError } = await pushSave(sub);
+    if (saveError) throw saveError;
+    toast("Notifications are on for this phone.");
+  } catch (e) {
+    console.error(e);
+    toast("Couldn't turn notifications on. Check your connection and try again.");
+  }
+}
+async function pushOff() {
+  const sub = await pushCurrent();
+  if (!sub) return;
+  await sb.rpc("push_unsubscribe", { p_endpoint: sub.endpoint });
+  await sub.unsubscribe();
+}
+async function pushTest() {
+  const { data, error } = await sb.functions.invoke("push", { body: { action: "test" } });
+  toast(!error && data?.ok ? "Test sent. It should appear in a few seconds." : "The test didn't send. Turn notifications off and on again.");
+}
+async function renderPushCard() {
+  const box = document.getElementById("push-card");
+  if (!box) return;
+  const what = `<ul class="small" style="margin:0;padding-left:18px"><li>New calls, as soon as they finish</li><li>Jobs that still need a price, at 6pm</li><li>Quotes to chase, at 8am on the day</li></ul>`;
+  let html;
+  if (!pushSupported()) {
+    html = isIOS() && !isInstalled()
+      ? `<p>Notifications only work once foner is on your Home Screen. Follow the steps below, open foner from its new icon, then come back here.</p>`
+      : `<p>This browser can't show notifications. On an iPhone, you'll need iOS 16.4 or later.</p>`;
+  } else if (Notification.permission === "denied") {
+    html = `<p>Notifications are blocked for foner on this phone. Allow them in your phone's Settings, then come back here.</p>`;
+  } else {
+    const on = Notification.permission === "granted" && !!(await pushCurrent().catch(() => null));
+    html = on
+      ? `<p><strong>On for this phone.</strong> You'll get:</p>${what}<div class="row" style="justify-content:flex-start;flex-wrap:wrap"><button class="btn small" id="push-test">Send a test</button><button class="btn small ghost" id="push-off">Turn off</button></div>`
+      : `<p>Get a notification for:</p>${what}<div><button class="btn primary" id="push-on">Turn on notifications</button></div>`;
+  }
+  // The screen may have moved on while checking
+  const now = document.getElementById("push-card");
+  if (now) now.innerHTML = html;
+}
+// Keeps this device's details current, in case the phone has renewed them
+async function pushResync() {
+  if (!pushSupported() || Notification.permission !== "granted") return;
+  if (!state.clients.find((x) => x.id === state.clientId)?.push_enabled) return;
+  const sub = await pushCurrent();
+  if (sub) await pushSave(sub);
+}
+// Tapping a notification while foner is already open
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.addEventListener("message", (e) => {
+    if (typeof e.data?.pushUrl === "string" && e.data.pushUrl.startsWith("#/")) location.hash = e.data.pushUrl;
+  });
 }
 
 // ---------- events ----------
@@ -1992,7 +2084,10 @@ document.addEventListener("click", async (e) => {
     });
     return;
   }
-  if (t.id === "signout") { await sb.auth.signOut(); return; }
+  if (t.id === "push-on") { t.disabled = true; await pushOn(); renderPushCard(); return; }
+  if (t.id === "push-off") { t.disabled = true; await pushOff(); renderPushCard(); return; }
+  if (t.id === "push-test") { t.disabled = true; await pushTest(); t.disabled = false; return; }
+  if (t.id === "signout") { await pushOff().catch(() => {}); await sb.auth.signOut(); return; }
   if (t.id === "import") {
     t.disabled = true;
     const out = document.getElementById("import-out");
@@ -2124,6 +2219,7 @@ async function onSession(session) {
   } catch (e) { console.error(e); }
   subscribe();
   sb.rpc("mark_opened").then(() => {});
+  pushResync().catch(() => {});
   if (!location.hash.startsWith("#/")) history.replaceState(null, "", "#/");
   route();
 }
