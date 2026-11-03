@@ -3,6 +3,7 @@
 //   POST { action: "key" }                     public VAPID key for the portal
 //   POST { action: "test" }                    signed-in user: test notification to their own devices
 //   POST { action: "call", call_id }           new call (database trigger, x-foner-key)
+//   POST { action: "signin", member_id, dry? } customer's first portal open: tells foner admins' devices (database trigger, x-foner-key)
 //   POST { action: "run", dry?, at?, all? }    reminders (cron, x-foner-key): needs a price at 6pm UK, chase at 8am UK.
 //                                              `at` and `all` (every active business) only work with dry: nothing is sent.
 //
@@ -73,6 +74,19 @@ async function onCall(callId: string) {
   return deliver(subs, callMessage(c), "high");
 }
 
+async function onSignin(memberId: string, dry: boolean) {
+  const { data: m } = await db.from("client_members").select("id,client_id,email,clients(business_name,owner_name)").eq("id", memberId).maybeSingle();
+  if (!m) return { skipped: "unknown member" };
+  const client = (m as any).clients;
+  const admins = ((await db.from("admins").select("email")).data ?? []).map((a: { email: string }) => a.email);
+  const subs = ((await db.from("push_subscriptions").select("id,endpoint,p256dh,auth").in("email", admins)).data ?? []) as Sub[];
+  const msg: Msg = { title: `${client.owner_name || client.business_name} has opened foner`, body: `${client.business_name} is in their portal for the first time.`, url: "#/admin", tag: `signin-${m.id}` };
+  if (dry) return { would_send: msg, devices: subs.length };
+  if (!subs.length) return { skipped: "no devices" };
+  if (!(await claim(m.client_id, "signin", m.id, ""))) return { skipped: "already sent" };
+  return deliver(subs, msg, "high");
+}
+
 async function sendBatch(clientId: string, subs: Sub[], kind: "price" | "chase", slot: string, items: { ref: string; msg: Msg }[], summary: Msg, dry: boolean, report: unknown[]) {
   if (dry) { report.push({ client: clientId, kind, would_send: items.length > MAX_SINGLE ? [summary.title] : items.map((i) => i.msg.title) }); return; }
   const fresh: { ref: string; msg: Msg }[] = [];
@@ -130,6 +144,7 @@ Deno.serve(async (req) => {
 
     if ((req.headers.get("x-foner-key") ?? "") !== k.push_key) return json({ error: "unauthorised" }, 401);
     if (body.action === "call") return json(await onCall(String(body.call_id)));
+    if (body.action === "signin") return json(await onSignin(String(body.member_id), body.dry === true));
     if (body.action === "run") {
       const dry = body.dry === true;
       return json(await run(dry && body.at ? new Date(body.at) : new Date(), dry, body.all === true));
