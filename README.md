@@ -37,7 +37,7 @@ Recordings are streamed on demand by the `call-audio` function (it checks the si
   - `ELEVENLABS_API_KEY`: an ElevenLabs key with read access to Conversational AI (for recordings and imports).
 - Security: row-level security on every table. Owners see only their business (matched by their confirmed sign-in email in `client_members`); they can tick calls done, add notes and send requests, nothing else. Admins are listed in `admins`.
 
-To switch notifications on for a business, set `clients.push_enabled` to true. Sending runs from the `calls_push` database trigger and the `foner-push-reminders` cron job, and `push_log` stops anything going twice.
+The first time a customer opens the portal, foner admins' phones get a notification (`client_members_first_open` trigger). To switch notifications on for a business, set `clients.push_enabled` to true. Sending runs from the `calls_push` database trigger and the `foner-push-reminders` cron job, and `push_log` stops anything going twice.
 
 ## Adding a customer to the portal
 

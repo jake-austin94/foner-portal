@@ -8,6 +8,7 @@ Applied to the `foner` Supabase project (ref `lkfriflskqyvwaknzbet`) on 21 Oct 2
 | 20261021134532 | notify_change_requests | pg_net trigger that posts each new change request to the n8n workflow "foner - Portal change request alert" |
 | (30 Oct 2026) | ad_tracking | `site_events`, `site_leads`, `ad_spend` and the `ad_performance` view for foner.uk ad tracking. The website can only insert; admins read and edit |
 | (2 Nov 2026) | push_notifications | `clients.push_enabled`, `push_subscriptions`, `push_log`, the new-call trigger and the `foner-push-reminders` cron job |
+| (3 Nov 2026) | push_customer_first_open | Notifies foner admins the first time a customer opens the portal |
 
 The SQL is stored in Supabase (Database → Migrations). To copy it into this folder, run
 `supabase link --project-ref lkfriflskqyvwaknzbet && supabase db pull`.
