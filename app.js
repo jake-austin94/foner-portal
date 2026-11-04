@@ -1945,13 +1945,14 @@ async function route() {
     html = shell("home", `<div class="err-box" role="alert">Couldn't load your calls. Check your connection, then <button class="link" onclick="location.reload()">reload</button>.</div>`);
   }
   if (my !== routing || !html) return;
-  const keepScroll = window.scrollY;
+  const keepScroll = desktop.matches ? window.scrollY : document.getElementById("main")?.scrollTop || 0;
   const sameCallsPage = desktop.matches && page === "calls" && app.querySelector(".split");
   const listScroll = sameCallsPage ? app.querySelector(".split .pane")?.scrollTop : 0;
   app.innerHTML = html;
   const q = document.getElementById("q");
   if (q && document.activeElement !== q && state.query) { /* keep value */ }
   if (sameCallsPage) { const p = app.querySelector(".split .pane"); if (p) p.scrollTop = listScroll; }
+  else if (!desktop.matches) { const m = document.getElementById("main"); if (m) m.scrollTop = route.lastHash !== hash ? 0 : keepScroll; }
   else if (route.lastHash !== hash) window.scrollTo(0, 0); else window.scrollTo(0, keepScroll);
   route.lastHash = hash;
   if (page === "account") renderPushCard();
@@ -2202,6 +2203,34 @@ document.addEventListener("visibilitychange", async () => {
   if (document.visibilityState === "visible" && state.session && state.clientId) {
     sb.rpc("mark_opened").then(() => {}); await loadCalls(true); route(); }
 });
+
+// ---------- screen height on phones and tablets ----------
+// Sizes the app to what's actually visible, so the tabs stay on screen and scrolling reaches the bottom.
+let tallest = 0, tallestWidth = 0, keyboardWasOpen = false;
+function syncScreen() {
+  const vv = window.visualViewport;
+  if (vv && vv.scale > 1.01) return; // leave pinch-zoom alone
+  const h = Math.round(vv ? vv.height : window.innerHeight);
+  if (window.innerWidth !== tallestWidth) { tallestWidth = window.innerWidth; tallest = 0; }
+  tallest = Math.max(tallest, h);
+  const root = document.documentElement;
+  root.style.setProperty("--app-h", `${h}px`);
+  if (desktop.matches) return;
+  const keyboardOpen = h < tallest * 0.8;
+  root.classList.toggle("keyboard-open", keyboardOpen);
+  window.scrollTo(0, 0); // undo any shift iOS left behind
+  if (keyboardOpen && !keyboardWasOpen) document.activeElement?.scrollIntoView?.({ block: "center" });
+  keyboardWasOpen = keyboardOpen;
+}
+syncScreen();
+window.visualViewport?.addEventListener("resize", syncScreen);
+window.visualViewport?.addEventListener("scroll", syncScreen);
+window.addEventListener("resize", syncScreen);
+window.addEventListener("orientationchange", syncScreen);
+window.addEventListener("pageshow", syncScreen);
+document.addEventListener("focusout", () => setTimeout(syncScreen, 100));
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") syncScreen(); });
+desktop.addEventListener("change", syncScreen);
 
 // ---------- boot ----------
 async function onSession(session) {
