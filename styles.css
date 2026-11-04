@@ -565,3 +565,24 @@ body { overscroll-behavior-x: none; }
 .lead-row:focus-visible { outline: 2px solid var(--action); outline-offset: -2px; }
 .section-head .btn.small svg { width: 16px; height: 16px; }
 @media (min-width: 960px) { .figs.ads-figs { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+/* ---------- phone and tablet: the app fills the screen and only the middle scrolls ---------- */
+/* iPhones can leave the page taller than the screen, which hides the tabs and stops one-finger
+   scrolling reaching the bottom. --app-h is the real visible height, set in app.js. */
+@media (max-width: 959.98px) {
+  html { height: 100%; overflow: hidden; }
+  body { position: fixed; inset: 0; width: 100%; overflow: hidden; overscroll-behavior: none; }
+  #app { height: 100vh; height: var(--app-h, 100dvh); overflow-x: clip; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  .boot, .login { min-height: 100%; }
+  .shell { height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+  .shell > .topbar { position: relative; flex: none; }
+  .shell > main { flex: 1 1 auto; min-height: 0; overflow-x: clip; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior-y: contain; touch-action: pan-y; padding-bottom: 24px; }
+  .shell > .tabs { position: relative; left: auto; right: auto; bottom: auto; flex: none; }
+  .donebar { bottom: 8px; }
+  .scrim { inset: 0 0 auto 0; height: 100vh; height: var(--app-h, 100dvh); }
+  .sheet { max-height: 92vh; max-height: calc(var(--app-h, 100dvh) * .92); }
+  #toast { bottom: auto; top: calc(var(--app-h, 100dvh) - var(--tab-h) - env(safe-area-inset-bottom) - 16px); transform: translate(-50%, calc(-100% + 20px)); }
+  #toast.show { transform: translate(-50%, -100%); }
+  /* The keyboard needs the room, so the tabs step aside while typing */
+  .keyboard-open .shell > .tabs { display: none; }
+}
