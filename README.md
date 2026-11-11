@@ -7,7 +7,7 @@ The customer portal for foner, the AI phone receptionist for UK trades. Plain HT
 - **Home**: who to ring back, with one-tap Call / WhatsApp / done; this month's calls, enquiries, messages, minutes used against their plan, and (if an average job value is set) the value of enquiries caught.
 - **Calls**: every call, filterable (to do, enquiries, messages, no details) and searchable; each call has caller details, summary, recording, full transcript, notes, and "mark as done".
 - **Receptionist**: their AI number and what the receptionist knows; ask for changes to business details, or suggest how calls should be handled. Every request shows its progress and your reply.
-- **Account**: plan, change password, add to home screen, help, sign out.
+- **Account**: plan and billing (pay monthly or yearly, manage card and invoices), change password, add to home screen, help, sign out.
 - **Admin** (foner only): all open requests across clients with status + reply, a business switcher, and "Import past calls".
 - **Ads** (foner only): which adverts bring sign-ups, free months and paying customers. Per-ad funnel and cost per sign-up, trial and customer (from the `ad_performance` view), every foner.uk sign-up with a tap-to-update stage, and weekly ad spend entry. Sign-ups and visits come from `assets/track.js` on foner.uk.
 - **Jobs (CRM)**: every enquiry call becomes a job automatically (repeat callers attach to the same customer). Stages: New enquiry → Quote visit booked → Quoted (£) → Won → Job booked → Completed, or Lost with a reason. One-tap "next step" sheets fill in dates and bookings.
@@ -32,9 +32,11 @@ Recordings are streamed on demand by the `call-audio` function (it checks the si
 
 - Project `foner`, ref `lkfriflskqyvwaknzbet`.
 - Edge functions (source in `supabase/functions`): `ingest-call`, `call-audio`, `import-calls`, `calendar` (iCalendar feed, keyed by `clients.calendar_token`), `push` (notifications; timing rules in `rules.js`, tests with `node --test supabase/functions/push/rules.test.mjs`).
+- Billing (Stripe): `stripe-checkout`, `stripe-portal`, `stripe-webhook`, `stripe-invoice-item`. Set-up, secrets and testing are in [BILLING.md](BILLING.md); webhook logic tests with `node --test supabase/functions/stripe-webhook/logic.test.mjs`.
 - Secrets the functions need (Supabase → Edge Functions → Secrets):
   - `ELEVENLABS_WEBHOOK_SECRET`: the same signing secret the n8n Code node uses.
   - `ELEVENLABS_API_KEY`: an ElevenLabs key with read access to Conversational AI (for recordings and imports).
+  - `STRIPE_SECRET_KEY` (a restricted `rk_` key) and `STRIPE_WEBHOOK_SECRET` (`whsec_`): for billing, see BILLING.md.
 - Security: row-level security on every table. Owners see only their business (matched by their confirmed sign-in email in `client_members`); they can tick calls done, add notes and send requests, nothing else. Admins are listed in `admins`.
 
 The first time a customer opens the portal, foner admins' phones get a notification (`client_members_first_open` trigger). To switch notifications on for a business, set `clients.push_enabled` to true. Sending runs from the `calls_push` database trigger and the `foner-push-reminders` cron job, and `push_log` stops anything going twice.
