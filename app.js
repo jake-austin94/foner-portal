@@ -725,6 +725,10 @@ function viewAccount() {
       <div class="setting"><span class="k">Business</span><p class="v">${esc(c?.business_name || "")}</p></div>
       <div class="setting"><span class="k">Plan</span><p class="v">${esc(c?.plan_name || "")}, ${c?.plan_minutes || 60} call minutes a month</p></div>
     </div>
+    ${billingVisible() ? `<section class="section">
+      <div class="section-head"><h2>Billing</h2></div>
+      <div class="card panel-pad stack" id="billing-card"><p class="muted small">Checking your plan…</p></div>
+    </section>` : ""}
     ${c?.push_enabled ? `<section class="section">
       <div class="section-head"><h2>Notifications</h2></div>
       <div class="card panel-pad stack" id="push-card"><p class="muted small">Checking this phone…</p></div>
@@ -754,10 +758,16 @@ function viewAccount() {
 
 async function viewAdmin() {
   if (!state.isAdmin) { location.hash = "#/"; return ""; }
-  const [{ data: reqs }, { data: members }] = await Promise.all([
+  const [{ data: reqs }, { data: members }, { data: alerts }] = await Promise.all([
     sb.from("change_requests").select("*, clients(business_name)").order("created_at", { ascending: false }).limit(100),
     sb.rpc("admin_member_activity"),
+    // Failed payments, disputes, refunds and fraud warnings from Stripe. Empty if billing isn't switched on yet.
+    sb.from("billing_alerts").select("*, clients(business_name)").is("resolved_at", null).order("created_at", { ascending: false }).limit(50),
   ]);
+  const alertRow = (a) => `<div class="req"><div class="row"><strong>${esc(a.clients?.business_name || "Unknown business")}</strong><span class="chip st-pending">${esc(ALERT_LABEL[a.kind] || a.kind)}</span></div>
+      <p class="small">${esc(a.detail || "")}</p>
+      <p class="small muted">${ago(a.created_at)}. <a href="https://dashboard.stripe.com/search?query=${encodeURIComponent(String(a.stripe_object_id).split(":")[0])}" target="_blank" rel="noopener">Find in Stripe</a></p>
+      <div><button class="btn small" data-alert-resolve="${a.id}">Mark as sorted</button></div></div>`;
   // "yesterday 22:49" / "15 min ago" / "on Wed, 21 Oct"
   const when = (t) => { if (!t) return ""; const a = ago(t); return /^(Just|Yesterday|\d)/.test(a) ? a.toLowerCase() : /^\d\d:\d\d$/.test(a) ? `today ${a}` : `on ${a}`; };
   const memberRow = (m) => {
@@ -789,7 +799,11 @@ async function viewAdmin() {
     </form>`;
   return shell("admin", `
     <h1 style="margin-bottom:14px">Admin</h1>
-    <section class="section" style="margin-top:0">
+    ${(alerts || []).length ? `<section class="section" style="margin-top:0">
+      <div class="section-head"><h2>Billing alerts (${alerts.length})</h2></div>
+      <div class="card">${alerts.map(alertRow).join("")}</div>
+    </section>` : ""}
+    <section class="section" ${(alerts || []).length ? "" : 'style="margin-top:0"'}>
       <div class="section-head"><h2>Client logins</h2></div>
       <div class="card">${(members || []).map(memberRow).join("") || '<div class="empty"><p>No client logins yet.</p></div>'}</div>
       <p class="muted small" style="margin-top:8px">Your own test logins count too, so sign out of a client's account after checking it.</p>
@@ -1955,7 +1969,7 @@ async function route() {
   else if (!desktop.matches) { const m = document.getElementById("main"); if (m) m.scrollTop = route.lastHash !== hash ? 0 : keepScroll; }
   else if (route.lastHash !== hash) window.scrollTo(0, 0); else window.scrollTo(0, keepScroll);
   route.lastHash = hash;
-  if (page === "account") renderPushCard();
+  if (page === "account") { renderPushCard(); renderBillingCard(); }
   // A "needs a price" notification opens straight on the Add price sheet
   if (page === "jobs" && id && action === "price") {
     route.lastHash = `#/jobs/${id}`;
@@ -1963,6 +1977,118 @@ async function route() {
     const j = jobById(id);
     if (j && ["new", "visit_booked", "quoted"].includes(j.stage)) priceSheet(j);
   }
+}
+
+// ---------- billing (Stripe) ----------
+// Money lives in Stripe. The portal reads a copy of the status (the `billing` table, kept up to date by
+// the stripe-webhook function) and sends people to Stripe's own pages to pay or manage their plan.
+const ALERT_LABEL = { payment_failed: "Payment failed", dispute: "Dispute", refund: "Refund", fraud_warning: "Fraud warning", unknown_customer: "Unknown customer" };
+const fullDate = (t) => new Date(t).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+let billingPolls = 0;
+
+// Calls a billing function and returns its JSON, or throws an Error carrying the function's own message.
+async function billingFn(name, body) {
+  const { data, error } = await sb.functions.invoke(name, { body });
+  if (error) {
+    let msg = "";
+    try { msg = (await error.context?.json?.())?.error || ""; } catch { /* no body */ }
+    throw new Error(msg || "Something went wrong. Try again in a minute.");
+  }
+  return data;
+}
+
+// While Stripe is in sandbox mode only foner admins see Billing. To go live with real keys,
+// set this to false (see BILLING.md, "Before going live").
+const BILLING_ADMINS_ONLY = true;
+const billingVisible = () => !BILLING_ADMINS_ONLY || state.isAdmin;
+
+async function renderBillingCard() {
+  const box = document.getElementById("billing-card");
+  if (!box || !billingVisible()) return;
+  const c = client();
+  const { data: b, error } = await sb.from("billing").select("*").eq("client_id", state.clientId).maybeSingle();
+  // Billing isn't switched on yet: don't show customers an empty section.
+  if (error) { box.closest("section")?.remove(); return; }
+
+  // Coming back from Stripe Checkout
+  const back = new URLSearchParams(location.search).get("billing");
+  if (back) {
+    history.replaceState(null, "", location.pathname + location.hash);
+    if (back === "success") { billingPolls = 6; toast("Thanks. Your plan is being set up."); }
+    else toast("No payment was taken.");
+  }
+
+  const status = b?.status || "none";
+  const live = ["active", "trialing"].includes(status);
+  const every = b?.billing_interval === "year" ? "Yearly" : "Monthly";
+  let html;
+  if (live) {
+    html = `<p><strong>Your plan is active.</strong> ${every} plan, ${c?.plan_minutes || 60} call minutes a month.</p>
+      <p class="small muted">${b.current_period_end ? (b.cancel_at_period_end ? `It ends on ${fullDate(b.current_period_end)}.` : `Next payment on ${fullDate(b.current_period_end)}.`) : ""}</p>
+      <div><button class="btn" id="bill-manage">Manage billing</button></div>`;
+  } else if (["past_due", "unpaid"].includes(status)) {
+    html = `<p><strong>Your last payment didn't go through.</strong> Update your card and we'll try again.</p>
+      <div><button class="btn primary" id="bill-manage">Update payment details</button></div>`;
+  } else if (billingPolls > 0) {
+    // Just paid: the confirmation from Stripe usually lands within a few seconds.
+    html = `<p>Confirming your payment…</p>`;
+    billingPolls -= 1;
+    setTimeout(renderBillingCard, 3000);
+  } else {
+    const end = c?.trial_ends_at;
+    const trialLine = end && new Date(end + "T23:59:59") >= new Date() ? `Your free month runs until ${fullDate(end)}. You don't need to pay anything before then.`
+      : end ? "Your free month has ended." : "";
+    html = `${trialLine ? `<p>${trialLine}</p>` : ""}
+      <p class="small muted">Pay when you're ready. Cancel any time.</p>
+      <div class="row" style="justify-content:flex-start;flex-wrap:wrap">
+        <button class="btn primary" id="bill-month">Pay monthly, £49</button>
+        <button class="btn" id="bill-year">Pay yearly, £490 <span class="small muted">(2 months free)</span></button>
+      </div>`;
+  }
+
+  if (state.isAdmin) {
+    html += `<hr style="border:0;border-top:1px solid var(--line, #e5e7eb);width:100%;margin:4px 0">
+      <p class="small muted"><strong>foner admin</strong> · ${esc(c?.business_name || "")}</p>
+      <div class="row" style="justify-content:flex-start;flex-wrap:wrap">
+        <button class="btn small" id="bill-copy-month">Copy payment link (monthly)</button>
+        <button class="btn small" id="bill-copy-year">Copy payment link (yearly)</button>
+        <button class="btn small" id="bill-topup">Add 30-minute top-up</button>
+      </div>
+      <p class="small muted">Payment links expire after 24 hours. In emails, link to app.foner.uk and the customer taps Pay there for a fresh one.</p>`;
+  }
+  const now = document.getElementById("billing-card");
+  if (now) now.innerHTML = html;
+}
+
+async function billingClick(t) {
+  const id = t.id || "";
+  if (!id.startsWith("bill-")) return false;
+  t.disabled = true;
+  try {
+    if (id === "bill-month" || id === "bill-year") {
+      const { url } = await billingFn("stripe-checkout", { interval: id === "bill-year" ? "year" : "month", client_id: state.clientId });
+      location.href = url; // off to Stripe; the button stays disabled
+      return true;
+    }
+    if (id === "bill-manage") {
+      const { url } = await billingFn("stripe-portal", { client_id: state.clientId });
+      location.href = url;
+      return true;
+    }
+    if (id === "bill-copy-month" || id === "bill-copy-year") {
+      const { url } = await billingFn("stripe-checkout", { interval: id === "bill-copy-year" ? "year" : "month", client_id: state.clientId });
+      try { await navigator.clipboard.writeText(url); toast("Payment link copied. It works for 24 hours."); } catch { prompt("Copy this payment link (works for 24 hours):", url); }
+    } else if (id === "bill-topup") {
+      if (confirm(`Add a 30-minute top-up (£10) for ${client()?.business_name}?`)) {
+        const r = await billingFn("stripe-invoice-item", { client_id: state.clientId, packs: 1, request_id: crypto.randomUUID() });
+        toast(`${r.timing}.`);
+      }
+    }
+  } catch (e) {
+    toast(e.message);
+  }
+  t.disabled = false;
+  return true;
 }
 
 // ---------- push notifications ----------
@@ -2051,6 +2177,12 @@ document.addEventListener("click", async (e) => {
   if (!t) return;
   if (await crmClick(t, e)) return;
   if (state.isAdmin && (await adsClick(t))) return;
+  if (await billingClick(t)) return;
+  if (t.dataset.alertResolve) {
+    const { error } = await sb.from("billing_alerts").update({ resolved_at: new Date().toISOString() }).eq("id", t.dataset.alertResolve);
+    if (error) toast("Couldn't update that. Try again."); else route();
+    return;
+  }
   if (t.dataset.done) { e.preventDefault(); setHandled(t.dataset.done, true); return; }
   if (t.dataset.undone) { setHandled(t.dataset.undone, false); return; }
   if (t.dataset.undo) { setHandled(t.dataset.undo, false); return; }
