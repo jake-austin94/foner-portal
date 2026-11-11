@@ -1984,7 +1984,6 @@ async function route() {
 // the stripe-webhook function) and sends people to Stripe's own pages to pay or manage their plan.
 const ALERT_LABEL = { payment_failed: "Payment failed", dispute: "Dispute", refund: "Refund", fraud_warning: "Fraud warning", unknown_customer: "Unknown customer" };
 const fullDate = (t) => new Date(t).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
-const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 let billingPolls = 0;
 
 // Calls a billing function and returns its JSON, or throws an Error carrying the function's own message.
@@ -2049,7 +2048,6 @@ async function renderBillingCard() {
         <button class="btn small" id="bill-copy-month">Copy payment link (monthly)</button>
         <button class="btn small" id="bill-copy-year">Copy payment link (yearly)</button>
         <button class="btn small" id="bill-topup">Add 30-minute top-up</button>
-        <button class="btn small" id="bill-overage">Bill last month's extra minutes</button>
       </div>
       <p class="small muted">Payment links expire after 24 hours. In emails, link to app.foner.uk and the customer taps Pay there for a fresh one.</p>`;
   }
@@ -2077,16 +2075,8 @@ async function billingClick(t) {
       try { await navigator.clipboard.writeText(url); toast("Payment link copied. It works for 24 hours."); } catch { prompt("Copy this payment link (works for 24 hours):", url); }
     } else if (id === "bill-topup") {
       if (confirm(`Add a 30-minute top-up (£10) for ${client()?.business_name}?`)) {
-        const r = await billingFn("stripe-invoice-item", { client_id: state.clientId, kind: "topup", packs: 1, request_id: crypto.randomUUID() });
+        const r = await billingFn("stripe-invoice-item", { client_id: state.clientId, packs: 1, request_id: crypto.randomUUID() });
         toast(`${r.timing}.`);
-      }
-    } else if (id === "bill-overage") {
-      const now = new Date();
-      const from = ymd(new Date(now.getFullYear(), now.getMonth() - 1, 1));
-      const to = ymd(new Date(now.getFullYear(), now.getMonth(), 0));
-      if (confirm(`Bill ${client()?.business_name} for any minutes over their plan between ${from} and ${to}?`)) {
-        const r = await billingFn("stripe-invoice-item", { client_id: state.clientId, kind: "overage", from, to });
-        toast(r.created ? `${r.minutes} extra minutes billed. ${r.timing}.` : "No extra minutes to bill for last month.");
       }
     }
   } catch (e) {

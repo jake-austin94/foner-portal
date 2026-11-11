@@ -11,19 +11,19 @@ Stripe tells us what happened
    └─ function stripe-webhook    checks the signature, updates the `billing` table, raises alerts
 Customer taps "Manage billing"
    └─ function stripe-portal     opens Stripe's Customer Portal (card, invoices, switch plan, cancel)
-Extra minutes (admin only, Account page)
-   └─ function stripe-invoice-item   adds a top-up or last month's overage to the customer's invoice
+Top-ups (admin only, Account page)
+   └─ function stripe-invoice-item   adds a 30-minute top-up (£10) to the customer's invoice
 ```
 
 | Piece | Where |
 |---|---|
-| Tables `billing`, `stripe_events`, `billing_alerts`, `billing_charges`, function `billing_usage` | `supabase/migrations/20261111120000_stripe_billing.sql` |
+| Tables `billing`, `stripe_events`, `billing_alerts`, `billing_charges` | `supabase/migrations/20261111120000_stripe_billing.sql` |
 | Functions | `supabase/functions/stripe-checkout`, `stripe-portal`, `stripe-webhook`, `stripe-invoice-item` |
 | Webhook decisions (tested) | `supabase/functions/stripe-webhook/logic.js` and `logic.test.mjs` |
 | Product and price setup | `scripts/stripe-setup.sh` |
 | Screens | `app.js`: Account → Billing; Admin → Billing alerts |
 
-**What you sell** (GBP): foner AI receptionist at £49/month (`foner_monthly`) or £490/year (`foner_annual`); 30-minute top-up £10 (`foner_topup_30`); extra minute 30p (`foner_overage_minute`). Functions find prices by these lookup keys, so no Stripe IDs are copied anywhere.
+**What you sell** (GBP): foner AI receptionist at £49/month (`foner_monthly`) or £490/year (`foner_annual`); 30-minute top-up £10 (`foner_topup_30`). There is no per-minute overage charge. Functions find prices by these lookup keys, so no Stripe IDs are copied anywhere.
 
 ## Set-up (about 20 minutes)
 
@@ -50,7 +50,7 @@ Do this on your own computer, in a sandbox first. Never paste a secret key into 
 1. Sign in to the portal as a test business, open Account → Billing, tap **Pay monthly**. Pay with test card `4242 4242 4242 4242`, any future date, any CVC.
 2. You return to the Account page; within a few seconds it should say **Your plan is active** with the next payment date.
 3. Tap **Manage billing**: you should land on Stripe's portal.
-4. As an admin, try **Add 30-minute top-up** and **Bill last month's extra minutes**, then check the sandbox's Customers → upcoming invoice.
+4. As an admin, try **Add 30-minute top-up**, then check the sandbox's Customers → upcoming invoice.
 5. Try the failure paths with Stripe's test cards ([docs.stripe.com/testing](https://docs.stripe.com/testing)): one that fails the charge shows up under Admin → Billing alerts, and one that triggers a dispute does the same. A later successful payment clears the failed-payment alert.
 6. Check `stripe_events`: every event should have a `processed_at` and no `error`.
 
@@ -67,7 +67,7 @@ Local development: `stripe listen --forward-to https://lkfriflskqyvwaknzbet.supa
 
 - **The free month is not in Stripe.** Nothing exists in Stripe until the customer taps Pay, and they are charged straight away at that point. The "free month runs until..." line comes from `clients.trial_ends_at`.
 - **Payment links expire after 24 hours.** In the end-of-trial email, link to `https://app.foner.uk` (customers tap Pay there for a fresh link). The admin "Copy payment link" buttons are for sending someone a link right now.
-- **Extra minutes.** Top-ups and overage are Stripe invoice items. A monthly subscriber's go on their next invoice. An annual subscriber's next invoice could be a year away, so they're invoiced straight away instead. Overage counts all non-spam, non-test calls in the range (UK time), rounds the total up to a whole minute, subtracts the plan's minutes and any top-ups bought in that same range, and bills the rest at 30p. Billing the same month twice is refused.
+- **Top-ups.** A top-up is a Stripe invoice item. A monthly subscriber's goes on their next invoice. An annual subscriber's next invoice could be a year away, so they're invoiced straight away instead. Tapping twice can't bill twice. Nothing is charged automatically when a customer goes over their minutes (no per-minute charge), and the receptionist keeps answering.
 - **"A month with no new enquiry is free"** isn't automated. Give that customer a credit or a 100%-off coupon in Stripe.
 - **Tax.** If you charge UK VAT (now, or once you pass the threshold), look at Stripe Tax alongside Billing. It collects nothing until you've added an active registration, so leave `automatic_tax` off until then; see [Collect taxes for recurring payments](https://docs.stripe.com/billing/taxes/collect-taxes.md).
 - **Not built yet:** moving a customer to "paying" in the Ads funnel (`site_leads.paid_at`) when they subscribe; an automatic end-of-trial email (the n8n workflow is untouched); metered billing through Metronome (not needed for one plan).

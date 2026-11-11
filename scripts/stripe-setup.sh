@@ -5,7 +5,6 @@
 #   foner AI receptionist   foner_monthly         £49.00 / month
 #                           foner_annual          £490.00 / year   (pay 10 months, get 12)
 #   Extra call minutes      foner_topup_30        £10.00 one-off   (quantity = packs of 30 minutes)
-#                           foner_overage_minute  £0.30 one-off    (quantity = minutes)
 #
 # The Edge Functions find prices by these lookup keys, so no Stripe IDs are copied anywhere.
 #
@@ -65,10 +64,9 @@ PLAN="$(product_for foner_monthly "foner AI receptionist" "AI phone receptionist
 make_price "$PLAN" foner_monthly "Monthly" 4900 month
 make_price "$PLAN" foner_annual  "Annual (pay 10 months, get 12)" 49000 year
 
-echo "Extra call minutes"
+echo "Top-ups"
 EXTRA="$(product_for foner_topup_30 "Extra call minutes" "Additional foner call minutes beyond the 60 included each month.")"
 make_price "$EXTRA" foner_topup_30        "Top-up: 30 minutes" 1000
-make_price "$EXTRA" foner_overage_minute  "Extra minute" 30
 
 echo
 echo "Done. Next: save your Customer Portal settings once in the Stripe Dashboard (see BILLING.md, step 5)."
