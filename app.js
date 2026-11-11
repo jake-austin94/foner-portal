@@ -1985,6 +1985,8 @@ async function route() {
 const ALERT_LABEL = { payment_failed: "Payment failed", dispute: "Dispute", refund: "Refund", fraud_warning: "Fraud warning", unknown_customer: "Unknown customer" };
 const fullDate = (t) => new Date(t).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 let billingPolls = 0;
+let billingJustPaid = false; // set when we come back from Stripe Checkout, cleared once the plan shows as active
+const GREEN_TICK = `<span aria-hidden="true" style="display:inline-flex;align-items:center;justify-content:center;width:1.3em;height:1.3em;border-radius:50%;background:#16a34a;color:#fff;font-weight:700;font-size:.9em;margin-right:.45em;vertical-align:middle">&#10003;</span>`;
 
 // Calls a billing function and returns its JSON, or throws an Error carrying the function's own message.
 async function billingFn(name, body) {
@@ -2014,7 +2016,7 @@ async function renderBillingCard() {
   const back = new URLSearchParams(location.search).get("billing");
   if (back) {
     history.replaceState(null, "", location.pathname + location.hash);
-    if (back === "success") { billingPolls = 6; toast("Thanks. Your plan is being set up."); }
+    if (back === "success") { billingPolls = 10; billingJustPaid = true; toast("Thanks. Your plan is being set up."); }
     else toast("No payment was taken.");
   }
 
@@ -2023,7 +2025,9 @@ async function renderBillingCard() {
   const every = b?.billing_interval === "year" ? "Yearly" : "Monthly";
   let html;
   if (live) {
-    html = `<p><strong>Your plan is active.</strong> ${every} plan, ${c?.plan_minutes || 60} call minutes a month.</p>
+    const celebrate = billingJustPaid;
+    if (celebrate) { billingJustPaid = false; toast(`${GREEN_TICK}<strong>Your account is active</strong>`, 6000); }
+    html = `<p>${celebrate ? GREEN_TICK : ""}<strong>Your plan is active.</strong> ${every} plan, ${c?.plan_minutes || 60} call minutes a month.</p>
       <p class="small muted">${b.current_period_end ? (b.cancel_at_period_end ? `It ends on ${fullDate(b.current_period_end)}.` : `Next payment on ${fullDate(b.current_period_end)}.`) : ""}</p>
       <div><button class="btn" id="bill-manage">Manage billing</button></div>`;
   } else if (["past_due", "unpaid"].includes(status)) {
@@ -2031,7 +2035,7 @@ async function renderBillingCard() {
       <div><button class="btn primary" id="bill-manage">Update payment details</button></div>`;
   } else if (billingPolls > 0) {
     // Just paid: the confirmation from Stripe usually lands within a few seconds.
-    html = `<p>Confirming your payment…</p>`;
+    html = `<p class="muted">Confirming your payment…</p>`;
     billingPolls -= 1;
     setTimeout(renderBillingCard, 3000);
   } else {
