@@ -725,10 +725,10 @@ function viewAccount() {
       <div class="setting"><span class="k">Business</span><p class="v">${esc(c?.business_name || "")}</p></div>
       <div class="setting"><span class="k">Plan</span><p class="v">${esc(c?.plan_name || "")}, ${c?.plan_minutes || 60} call minutes a month</p></div>
     </div>
-    <section class="section">
+    ${billingVisible() ? `<section class="section">
       <div class="section-head"><h2>Billing</h2></div>
       <div class="card panel-pad stack" id="billing-card"><p class="muted small">Checking your plan…</p></div>
-    </section>
+    </section>` : ""}
     ${c?.push_enabled ? `<section class="section">
       <div class="section-head"><h2>Notifications</h2></div>
       <div class="card panel-pad stack" id="push-card"><p class="muted small">Checking this phone…</p></div>
@@ -1997,9 +1997,14 @@ async function billingFn(name, body) {
   return data;
 }
 
+// While Stripe is in sandbox mode only foner admins see Billing. To go live with real keys,
+// set this to false (see BILLING.md, "Before going live").
+const BILLING_ADMINS_ONLY = true;
+const billingVisible = () => !BILLING_ADMINS_ONLY || state.isAdmin;
+
 async function renderBillingCard() {
   const box = document.getElementById("billing-card");
-  if (!box) return;
+  if (!box || !billingVisible()) return;
   const c = client();
   const { data: b, error } = await sb.from("billing").select("*").eq("client_id", state.clientId).maybeSingle();
   // Billing isn't switched on yet: don't show customers an empty section.
