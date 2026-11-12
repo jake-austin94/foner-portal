@@ -58,7 +58,7 @@ Local development: `stripe listen --forward-to https://lkfriflskqyvwaknzbet.supa
 
 ## Before going live
 
-- **Show Billing to customers.** Until then only foner admins see it. In `app.js`, set `BILLING_ADMINS_ONLY` to `false` (do this only with live keys in place).
+- **Live since 12 Nov 2026.** Billing is shown to all customers (`BILLING_ADMINS_ONLY = false` in `app.js`). Set it back to `true` to hide it from customers.
 - Repeat steps 3 to 8 with a **live** restricted key (`rk_live_`), a live webhook endpoint (its own `whsec_`) and live portal settings. Run `stripe-setup.sh` against the live account too. Don't reuse test keys or secrets.
 - Add an access policy (IP restriction) to the live key, and turn on passkey or authenticator 2FA for your Stripe login (not SMS).
 - Walk through Stripe's [go-live checklist](https://docs.stripe.com/get-started/checklist/go-live).
