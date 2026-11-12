@@ -1999,9 +1999,8 @@ async function billingFn(name, body) {
   return data;
 }
 
-// While Stripe is in sandbox mode only foner admins see Billing. To go live with real keys,
-// set this to false (see BILLING.md, "Before going live").
-const BILLING_ADMINS_ONLY = true;
+// Billing is live for all customers. Set to true to show it to foner admins only (e.g. while testing a new Stripe setup).
+const BILLING_ADMINS_ONLY = false;
 const billingVisible = () => !BILLING_ADMINS_ONLY || state.isAdmin;
 
 async function renderBillingCard() {
