@@ -70,15 +70,28 @@ Deno.serve(async (req) => {
     if (!price) return err(503, "Plans aren't set up in Stripe yet");
 
     let customerId = bill?.stripe_customer_id ?? null;
+    // If the saved customer was deleted in Stripe, forget it and start fresh instead of failing.
+    if (customerId) {
+      try {
+        const existing = await stripeClient.customers.retrieve(customerId);
+        if ((existing as { deleted?: boolean }).deleted) customerId = null;
+      } catch (e) {
+        if ((e as { code?: string })?.code === "resource_missing") customerId = null; else throw e;
+      }
+    }
     if (!customerId) {
-      // The idempotency key stops two quick taps from creating two Stripe customers.
+      // The idempotency key stops two quick taps from creating two Stripe customers. It is per minute so a
+      // customer that was deleted in Stripe can be created again (Stripe replays a key's answer for 24 hours).
       const customer = await stripeClient.customers.create(
         { name: biz.business_name, ...(biz.notification_email ? { email: biz.notification_email } : {}) },
-        { idempotencyKey: `foner-customer-${biz.id}` },
+        { idempotencyKey: `foner-customer-${biz.id}-${Math.floor(Date.now() / 60000)}` },
       );
       customerId = customer.id;
       // Our own mapping (not Stripe metadata) is how webhooks find this business again.
-      const { error: sErr } = await db.from("billing").upsert({ client_id: biz.id, stripe_customer_id: customerId }, { onConflict: "client_id" });
+      const { error: sErr } = await db.from("billing").upsert(
+        { client_id: biz.id, stripe_customer_id: customerId, stripe_subscription_id: null, status: "none", billing_interval: null, current_period_end: null, cancel_at_period_end: false },
+        { onConflict: "client_id" },
+      );
       if (sErr) throw sErr;
     }
 
