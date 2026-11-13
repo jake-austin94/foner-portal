@@ -563,6 +563,15 @@ function viewCalls() {
   return shell("calls", callsListHtml(null));
 }
 
+// "The receptionist heard: …" for fields the owner has since changed
+function originalHeard(c) {
+  const o = c.original_details || {};
+  const labels = { caller_name: "Name", caller_number: "Number", address: "Address", caller_email: "Email", service: "Job", quote_method: "Quote by", visit_preference: "Visit days", notes: "Notes" };
+  const rows = Object.entries(labels).filter(([k]) => String(o[k] || "") !== String(c[k] || ""))
+    .map(([k, l]) => `${l}: ${o[k] ? esc(o[k]) : "(blank)"}`);
+  return rows.length ? ` Originally heard: ${rows.join("; ")}.` : "";
+}
+
 async function viewCallDetail(id) {
   const { data: c, error } = await sb.from("calls").select("*").eq("id", id).maybeSingle();
   if (error || !c) {
@@ -620,7 +629,9 @@ async function viewCallDetail(id) {
       ${num ? `<button class="btn" data-copy="${esc(num)}">${I.copy}Copy number</button>` : ""}
     </div>
     ${jobPanelForCall(c)}
-    ${facts.length ? `<section class="section"><div class="section-head"><h2>Details</h2></div><dl class="card facts">${facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("")}</dl></section>` : ""}
+    ${c.kind !== "silent" ? `<section class="section"><div class="section-head"><h2>Details</h2><button class="btn ghost small" data-edit-call="${c.id}">${facts.length ? "Edit" : "Add details"}</button></div>
+      ${facts.length ? `<dl class="card facts">${facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("")}</dl>` : `<div class="card panel-pad"><p class="muted small">No details were taken on this call.</p></div>`}
+      ${c.details_edited_at ? `<p class="muted small" style="margin-top:8px">Corrected by you ${ago(c.details_edited_at)}.${originalHeard(c)}</p>` : ""}</section>` : ""}
     ${c.summary ? `<section class="section"><div class="section-head"><h2>What happened</h2></div><div class="card summary">${esc(c.summary)}</div></section>` : ""}
     <section class="section">
       <div class="section-head"><h2>Recording</h2></div>
@@ -1693,6 +1704,61 @@ function editCustomerSheet(cu) {
   });
 }
 
+// Correct what the receptionist heard on a call (names, numbers and addresses are easy to mishear).
+const QUOTE_METHODS = ["Photos by WhatsApp", "Photos by email", "In-person visit"];
+function editCallSheet(c, after) {
+  const cu = customerById(c.customer_id);
+  const job = jobById(c.job_id);
+  const oldNum = numberOf(c);
+  const quoteOpts = [...(c.quote_method && !QUOTE_METHODS.includes(c.quote_method) ? [c.quote_method] : []), ...QUOTE_METHODS];
+  openSheet({
+    title: "Edit call details",
+    intro: "Fix anything the receptionist misheard. The summary, transcript and recording stay as they were.",
+    body: `${fld("Name", `<input class="input" name="name" autocomplete="off" value="${esc(c.caller_name || "")}">`)}
+      ${fld("Number", `<input class="input" type="tel" name="number" value="${esc(c.caller_number || "")}">`, c.caller_id_number ? "Blank uses the number they rang from" : "")}
+      ${fld("Address", `<input class="input" name="address" value="${esc(c.address || "")}">`)}
+      ${fld("Email", `<input class="input" type="email" name="email" value="${esc(c.caller_email || "")}">`)}
+      ${fld("Job", `<input class="input" name="service" value="${esc(c.service || "")}">`)}
+      ${fld("Quote by", `<select class="input" name="quote"><option value=""></option>${quoteOpts.map((q) => opt(q, q, q === c.quote_method)).join("")}</select>`)}
+      ${fld("Visit days", `<input class="input" name="visit" value="${esc(c.visit_preference || "")}">`)}
+      ${fld("Notes", `<textarea name="notes" style="min-height:72px">${esc(c.notes || "")}</textarea>`)}
+      ${cu || job ? `<label class="check"><input type="checkbox" name="sync" checked> Also fix ${cu && job ? "their customer record and job" : cu ? "their customer record" : "the linked job"}</label>` : ""}`,
+    submit: "Save",
+    onSubmit: async (fd) => {
+      const v = (k) => String(fd.get(k) || "").trim() || null;
+      const patch = {
+        caller_name: v("name"), caller_number: v("number"), address: v("address"), caller_email: v("email"),
+        service: v("service"), quote_method: v("quote"), visit_preference: v("visit"), notes: v("notes"),
+      };
+      const saved = await save("calls", c.id, patch);
+      if (!saved) return false;
+      if (fd.get("sync")) {
+        // Only touch a customer/job field if it's empty or still holds the value the call had (i.e. the
+        // mistake that came from this call), so anything corrected separately is never overwritten.
+        const same = (a, b) => String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
+        const samePhone = (a, b) => normPhone(a) === normPhone(b);
+        const newNum = numberOf(saved);
+        const fix = (cur, oldV, newV, eq = same) => (!cur || eq(cur, oldV)) && !eq(oldV, newV) ? newV : undefined;
+        const clean = (o) => Object.fromEntries(Object.entries(o).filter(([, x]) => x !== undefined));
+        if (cu) {
+          const p = clean({
+            name: fix(cu.name, c.caller_name, saved.caller_name), phone: fix(cu.phone, oldNum, newNum, samePhone),
+            email: fix(cu.email, c.caller_email, saved.caller_email), address: fix(cu.address, c.address, saved.address),
+          });
+          if (Object.keys(p).length) await save("customers", cu.id, p);
+        }
+        if (job) {
+          const p = clean({ address: fix(job.address, c.address, saved.address), service: fix(job.service, c.service, saved.service) });
+          if (Object.keys(p).length) await save("jobs", job.id, p);
+        }
+      }
+      toast("Call details saved.");
+      if (after) after(); else route();
+      return true;
+    },
+  });
+}
+
 function eventSheet(ev, { jobId = null, day = null } = {}) {
   const job = jobById(ev?.job_id || jobId);
   const cuId = ev?.customer_id || job?.customer_id || "";
@@ -1837,6 +1903,11 @@ async function crmClick(t, e) {
   if (d.newJob) { addJobSheet({ callId: d.fromCall || null, customerOnly: !!d.customerOnly }); return true; }
   if (d.editJob) { const j = jobById(d.editJob); if (j) editJobSheet(j); return true; }
   if (d.editCust) { const c = customerById(d.editCust); if (c) editCustomerSheet(c); return true; }
+  if (d.editCall) {
+    const { data: c } = await sb.from("calls").select("*").eq("id", d.editCall).maybeSingle();
+    if (c) editCallSheet(c); else toast("Couldn't open that call. Try again.");
+    return true;
+  }
   if (d.delJob) {
     if (!confirm("Delete this job and its bookings? This can't be undone.")) return true;
     if (await remove("jobs", d.delJob)) { state.events = state.events.filter((x) => x.job_id !== d.delJob); toast("Job deleted."); location.hash = "#/jobs"; }
