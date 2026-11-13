@@ -51,7 +51,7 @@ Deno.serve(async (req) => {
   if (body.client_id && !/^[0-9a-f-]{36}$/i.test(body.client_id)) return err(400, "Bad client id");
 
   // Which business? Looked up with the caller's own session, so they can only pick one they can see.
-  let q = userClient.from("clients").select("id, business_name, notification_email").limit(2);
+  let q = userClient.from("clients").select("id, business_name, notification_email, trial_ends_at").limit(2);
   if (body.client_id) q = q.eq("id", body.client_id);
   const { data: found, error: cErr } = await q;
   if (cErr) return err(500, "Couldn't look up the business");
@@ -95,11 +95,25 @@ Deno.serve(async (req) => {
       if (sErr) throw sErr;
     }
 
+    // Still in the free month? Save the card now but take nothing until it ends. Stripe needs the trial to
+    // run at least 48 hours more, so inside that window we simply charge now.
+    let trialEnd: number | null = null;
+    if (biz.trial_ends_at) {
+      const t = Math.floor(new Date(`${biz.trial_ends_at}T23:59:59Z`).getTime() / 1000);
+      if (t - Math.floor(Date.now() / 1000) > 49 * 3600) trialEnd = t;
+    }
+
     // No payment_method_types on purpose: Stripe shows the methods switched on in the Dashboard.
     const session = await stripeClient.checkout.sessions.create({
       mode: "subscription",
       customer: customerId,
       line_items: [{ price: price.id, quantity: 1 }],
+      ...(trialEnd
+        ? {
+            payment_method_collection: "always" as const,
+            subscription_data: { trial_end: trialEnd, trial_settings: { end_behavior: { missing_payment_method: "cancel" as const } } },
+          }
+        : {}),
       success_url: `${SITE}/?billing=success#/account`,
       cancel_url: `${SITE}/?billing=cancelled#/account`,
       integration_identifier: `foner-portal-${suffix()}`,
