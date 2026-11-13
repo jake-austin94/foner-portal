@@ -201,7 +201,7 @@ main { padding: 0 0 calc(var(--tab-h) + env(safe-area-inset-bottom) + 24px); }
 .section-head a { font-size: .9375rem; font-weight: 600; text-decoration: none; }
 
 .month { padding: 16px; display: grid; gap: 14px; }
-.month .row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.month .row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 .month .num { font-size: 1.75rem; font-weight: 750; font-stretch: 112%; line-height: 1.1; }
 .month .lbl { font-size: .8125rem; color: var(--ink-3); }
 .meter { height: 8px; border-radius: 4px; background: var(--muted-soft); overflow: hidden; }

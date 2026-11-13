@@ -32,6 +32,7 @@ const state = {
   custQuery: "",
   calStart: null, // London day key for the first day shown in the calendar
   moneyPeriod: "month",
+  homePeriod: "all", // Home summary: "all" or "month". Not saved, so every reload starts on all time.
   recovery: false,
 };
 
@@ -454,12 +455,15 @@ function viewHome() {
   const c = client();
   const list = todo();
   const n = list.length;
+  const allTime = state.homePeriod !== "month";
   const ms = monthStart();
-  const month = state.calls.filter((x) => live(x) && new Date(x.started_at) >= ms);
+  const month = state.calls.filter((x) => live(x) && (allTime || new Date(x.started_at) >= ms));
   const answered = month.filter((x) => x.kind !== "silent");
   const enquiries = month.filter((x) => x.kind === "enquiry").length;
   const messages = month.filter((x) => x.kind === "message").length;
   const mins = Math.ceil(month.reduce((s, x) => s + (x.duration_secs || 0), 0) / 60);
+  const daysIn = Math.max(0, Math.round((new Date(`${todayKey()}T12:00:00Z`) - new Date(`${dayKey(new Date(c?.created_at || Date.now()))}T12:00:00Z`)) / 86400000));
+  const sinceTxt = daysIn === 0 ? "You joined today" : `${daysIn} ${daysIn === 1 ? "day" : "days"} since you joined`;
   const plan = c?.plan_minutes || 60;
   const pct = Math.min(100, Math.round((mins / plan) * 100));
   const people = n === 1 ? "person" : "people";
@@ -471,15 +475,16 @@ function viewHome() {
     ? `<div class="list tickets">${list.slice(0, 6).map(ticket).join("")}</div>${n > 6 ? `<p style="margin-top:10px"><a href="#/calls">See all ${n} calls to do</a></p>` : ""}`
     : `<div class="card empty"><h3>Nothing waiting</h3><p>When ${esc(c?.details?.receptionist_name || "your receptionist")} takes a call, the caller shows up here with a button to ring them straight back.</p></div>`;
 
-  // Money this month (jobs that started from a foner call)
+  // Money (jobs that started from a foner call): all time by default, or just this month
   const mk = todayKey().slice(0, 7);
+  const inScope = (k) => !!k && (allTime || String(k).startsWith(mk));
   const fj = state.jobs.filter((j) => j.from_foner);
-  const wonM = fj.filter((j) => (j.won_at || "").startsWith(mk));
-  const quotedM = fj.filter((j) => (j.quoted_at || "").startsWith(mk));
+  const wonM = fj.filter((j) => inScope(j.won_at));
+  const quotedM = fj.filter((j) => inScope(j.quoted_at));
   const wonSum = wonM.reduce((s, j) => s + jobValue(j), 0);
   const quotedSum = quotedM.reduce((s, j) => s + Number(j.quote_amount || 0), 0);
   const value = `<a class="value-line money-link" href="#/money">
-      <span><strong>${gbp(wonSum)}</strong> won and <strong>${gbp(quotedSum)}</strong> quoted from foner calls this month</span>${I.next}</a>`;
+      <span><strong>${gbp(wonSum)}</strong> won and <strong>${gbp(quotedSum)}</strong> quoted from foner calls ${allTime ? "in total" : "this month"}</span>${I.next}</a>`;
 
   // Today: bookings and quotes to chase
   const tk = todayKey();
@@ -499,17 +504,25 @@ function viewHome() {
       ${tickets}
       <div style="margin-top:26px">${todayHtml}</div>
       <section class="section" aria-labelledby="m-h">
-        <div class="section-head"><h2 id="m-h">This month</h2><a href="#/money">More</a></div>
+        <div class="section-head"><h2 id="m-h">${allTime ? "All time" : "This month"}</h2><a href="#/money">More</a></div>
+        <div class="filters" role="group" aria-label="Period" style="padding-bottom:10px">
+          <button data-home-period="all" aria-pressed="${allTime}">All time</button>
+          <button data-home-period="month" aria-pressed="${!allTime}">This month</button>
+        </div>
+        ${allTime ? `<p class="muted small" style="margin:-2px 0 10px">${sinceTxt}</p>` : ""}
         <div class="card month">
           <div class="row">
+            <div><div class="num">${wonM.length}</div><div class="lbl">jobs won</div></div>
             <div><div class="num">${answered.length}</div><div class="lbl">calls answered</div></div>
             <div><div class="num">${enquiries}</div><div class="lbl">new enquiries</div></div>
             <div><div class="num">${messages}</div><div class="lbl">messages</div></div>
           </div>
-          <div>
+          ${allTime
+            ? `<div class="small"><span>${mins} ${mins === 1 ? "minute" : "minutes"} of calls taken so far</span></div>`
+            : `<div>
             <div class="small" style="display:flex;justify-content:space-between;margin-bottom:6px"><span>${mins} of ${plan} minutes used</span><span class="muted">${esc(c?.plan_name || "")} plan</span></div>
             <div class="meter ${mins > plan ? "over" : ""}" role="img" aria-label="${mins} of ${plan} minutes used"><span style="width:${pct}%"></span></div>
-          </div>
+          </div>`}
           ${value}
         </div>
       </section>
@@ -1874,6 +1887,7 @@ async function crmClick(t, e) {
   if (d.jfilter) { state.jobFilter = d.jfilter; route(); return true; }
   if (d.jfilterGo) { state.jobFilter = d.jfilterGo; return false; }
   if (d.period) { state.moneyPeriod = d.period; route(); return true; }
+  if (d.homePeriod) { state.homePeriod = d.homePeriod; route(); return true; }
   if (d.copyCal) {
     try { await navigator.clipboard.writeText(d.copyCal); toast("Calendar link copied. In Google Calendar choose Other calendars, then From URL."); }
     catch { toast(esc(d.copyCal)); }
