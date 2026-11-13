@@ -334,16 +334,66 @@ function subscribe() {
     .on("postgres_changes", { event: "UPDATE", schema: "public", table: "calls", filter: `client_id=eq.${state.clientId}` }, (p) => {
       const i = state.calls.findIndex((c) => c.id === p.new.id);
       if (i >= 0) {
-        const keep = { status: state.calls[i].status, read_at: state.calls[i].read_at };
-        state.calls[i] = { ...state.calls[i], ...p.new };
+        const before = state.calls[i];
+        const keep = { status: before.status, read_at: before.read_at };
+        state.calls[i] = { ...before, ...p.new };
         if (p.new.status === undefined) Object.assign(state.calls[i], keep);
+        if (LIST_COLS.split(",").some((k) => k in p.new && JSON.stringify(p.new[k]) !== JSON.stringify(before[k]))) liveRefresh();
       }
     })
+    .on("postgres_changes", { event: "*", schema: "public", table: "customers", filter: `client_id=eq.${state.clientId}` }, (p) => liveRow("customers", p))
+    .on("postgres_changes", { event: "*", schema: "public", table: "jobs", filter: `client_id=eq.${state.clientId}` }, (p) => liveRow("jobs", p))
+    .on("postgres_changes", { event: "*", schema: "public", table: "events", filter: `client_id=eq.${state.clientId}` }, (p) => liveRow("events", p))
     .on("postgres_changes", { event: "UPDATE", schema: "public", table: "change_requests", filter: `client_id=eq.${state.clientId}` }, (p) => {
       const i = state.requests.findIndex((r) => r.id === p.new.id);
       if (i >= 0) { state.requests[i] = p.new; if (location.hash.startsWith("#/agent")) route(); }
     })
-    .subscribe();
+    .subscribe((status) => {
+      if (status === "SUBSCRIBED") {
+        // After a dropped connection (phone asleep, wifi change) anything missed is fetched again
+        if (state.wasLive) Promise.all([loadCalls(true), loadCRM(true)]).then(liveRefresh).catch(() => {});
+        state.wasLive = true;
+      }
+    });
+}
+
+// Apply a live change to customers, jobs or events, then redraw once it's safe to
+function liveRow(table, p) {
+  const list = state[table];
+  if (!Array.isArray(list)) return;
+  if (p.eventType === "DELETE") {
+    const id = p.old?.id;
+    if (!id || !list.some((x) => x.id === id)) return;
+    state[table] = list.filter((x) => x.id !== id);
+    if (table === "customers") { state.jobs = state.jobs.filter((j) => j.customer_id !== id); state.events = state.events.filter((e) => e.customer_id !== id); }
+    if (table === "jobs") state.events = state.events.filter((e) => e.job_id !== id);
+    return liveRefresh();
+  }
+  const row = p.new;
+  if (!row?.id) return;
+  const i = list.findIndex((x) => x.id === row.id);
+  if (i >= 0) {
+    if (Object.keys(row).every((k) => JSON.stringify(row[k]) === JSON.stringify(list[i][k]))) return; // our own save echoing back
+    list[i] = { ...list[i], ...row };
+  } else if (table === "events") {
+    list.push(row); list.sort((a, b) => a.starts_at.localeCompare(b.starts_at));
+  } else list.unshift(row);
+  liveRefresh();
+}
+
+// Redraw the current screen after a live change, but never while it would cost the user something:
+// a sheet is open, they're typing, or a recording is playing. In those cases try again shortly.
+let refreshTimer = null;
+function liveRefresh() {
+  clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(function tick() {
+    const el = document.activeElement;
+    const busy = document.querySelector(".scrim")
+      || (el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))
+      || [...document.querySelectorAll("audio")].some((a) => !a.paused);
+    if (busy) { refreshTimer = setTimeout(tick, 2000); return; }
+    route();
+  }, 300);
 }
 
 const todo = () => state.calls.filter((c) => live(c) && c.status === "new" && c.kind !== "silent");
@@ -2437,7 +2487,7 @@ window.addEventListener("hashchange", route);
 desktop.addEventListener("change", route);
 document.addEventListener("visibilitychange", async () => {
   if (document.visibilityState === "visible" && state.session && state.clientId) {
-    sb.rpc("mark_opened").then(() => {}); await loadCalls(true); route(); }
+    sb.rpc("mark_opened").then(() => {}); await Promise.all([loadCalls(true), loadCRM(true)]); route(); }
 });
 
 // ---------- screen height on phones and tablets ----------
