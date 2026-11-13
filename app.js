@@ -2025,10 +2025,16 @@ async function renderBillingCard() {
   let html;
   if (live) {
     const celebrate = billingJustPaid;
-    if (celebrate) { billingJustPaid = false; toast(`${GREEN_TICK}<strong>Your account is active</strong>`, 6000); }
-    html = `<p>${celebrate ? GREEN_TICK : ""}<strong>Your plan is active.</strong> ${every} plan, ${c?.plan_minutes || 60} call minutes a month.</p>
-      <p class="small muted">${b.current_period_end ? (b.cancel_at_period_end ? `It ends on ${fullDate(b.current_period_end)}.` : `Next payment on ${fullDate(b.current_period_end)}.`) : ""}</p>
-      <div><button class="btn" id="bill-manage">Manage billing</button></div>`;
+    const trialing = status === "trialing";
+    if (celebrate) { billingJustPaid = false; toast(`${GREEN_TICK}<strong>${trialing ? "Card saved" : "Your account is active"}</strong>`, 6000); }
+    const amount = b.billing_interval === "year" ? "£490" : "£49";
+    const when = b.current_period_end ? fullDate(b.current_period_end) : "the day it ends";
+    html = (trialing
+      ? `<p>${celebrate ? GREEN_TICK : ""}<strong>Card saved.</strong> Your free month carries on. ${b.cancel_at_period_end ? "You've cancelled, so nothing will be taken." : `Your first payment of ${amount} is on ${when}.`}</p>
+      <p class="small muted">${b.cancel_at_period_end ? "" : "Cancel any time before then and nothing is taken."}</p>`
+      : `<p>${celebrate ? GREEN_TICK : ""}<strong>Your plan is active.</strong> ${every} plan, ${c?.plan_minutes || 60} call minutes a month.</p>
+      <p class="small muted">${b.current_period_end ? (b.cancel_at_period_end ? `It ends on ${fullDate(b.current_period_end)}.` : `Next payment on ${fullDate(b.current_period_end)}.`) : ""}</p>`)
+      + `<div><button class="btn" id="bill-manage">Manage billing</button></div>`;
   } else if (["past_due", "unpaid"].includes(status)) {
     html = `<p><strong>Your last payment didn't go through.</strong> Update your card and we'll try again.</p>
       <div><button class="btn primary" id="bill-manage">Update payment details</button></div>`;
@@ -2039,14 +2045,24 @@ async function renderBillingCard() {
     setTimeout(renderBillingCard, 3000);
   } else {
     const end = c?.trial_ends_at;
-    const trialLine = end && new Date(end + "T23:59:59") >= new Date() ? `Your free month runs until ${fullDate(end)}. You don't need to pay anything before then.`
+    const inFree = end && new Date(end + "T23:59:59") >= new Date();
+    const trialLine = inFree ? `<strong>Keep foner after your free month.</strong> Your free month runs until ${fullDate(end)}.`
       : end ? "Your free month has ended." : "";
     html = `${trialLine ? `<p>${trialLine}</p>` : ""}
-      <p class="small muted">Pay when you're ready. Cancel any time.</p>
+      <p class="small muted">${inFree ? `Add your card now and nothing is taken until ${fullDate(end)}. Do nothing and foner simply stops.` : "Pay when you're ready. Cancel any time."}</p>
       <div class="row" style="justify-content:flex-start;flex-wrap:wrap">
-        <button class="btn primary" id="bill-month">Pay monthly, £49</button>
-        <button class="btn" id="bill-year">Pay yearly, £490 <span class="small muted">(2 months free)</span></button>
+        <button class="btn primary" id="bill-month">${inFree ? "Add card, £49 a month" : "Pay monthly, £49"}</button>
+        <button class="btn" id="bill-year">${inFree ? "Add card, £490 a year" : "Pay yearly, £490"} <span class="small muted">(2 months free)</span></button>
       </div>`;
+    // Emailed link (?pay=month or ?pay=year): go straight to Stripe once, so a refresh can't loop.
+    const want = new URLSearchParams(location.search).get("pay");
+    if (want === "month" || want === "year") {
+      history.replaceState(null, "", location.pathname + location.hash);
+      const now = document.getElementById("billing-card");
+      if (now) now.innerHTML = html;
+      document.getElementById(`bill-${want}`)?.click();
+      return;
+    }
   }
 
   if (state.isAdmin) {
